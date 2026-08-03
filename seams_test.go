@@ -72,8 +72,31 @@ func TestACompositionRootByClauseIsExempt(t *testing.T) {
 // TestATestFileIsExempt pins that a _test.go file reaching for the real
 // filesystem and the real clock is left alone, even in a package that is
 // otherwise in scope.
+//
+// It pins the boundary of the test-support exemption with it, which is the
+// property that keeps that exemption from swallowing the fleet: tested_test.go
+// imports `testing`, as every tested package's test file does, and the package
+// is still in scope — the production reach for the clock in tested.go is
+// reported. Only a NON-test file's import marks test support.
 func TestATestFileIsExempt(t *testing.T) {
 	analysistest.Run(t, analysistest.TestData(), seams.Analyzer, "tested")
+}
+
+// TestATestSupportPackageIsExempt pins the exemption for a package that exists
+// only to serve tests, proven by a non-test file importing `testing`. Its name
+// carries no `test` suffix on purpose: the import is the rule, so `testutil`
+// and `harness` are recognised where a suffix match would report them.
+func TestATestSupportPackageIsExempt(t *testing.T) {
+	analysistest.Run(t, analysistest.TestData(), seams.Analyzer, "harness")
+}
+
+// TestAWordEndingInTestIsNotTestSupport pins the false positive the tempting
+// rule would produce. Package `latest` ends in the letters "test" and is
+// ordinary production code; it imports no testing package, so it stays in
+// scope and its reaches are reported. `pgtest` and `latest` are the same string
+// shape, which is precisely why the spelling is never consulted.
+func TestAWordEndingInTestIsNotTestSupport(t *testing.T) {
+	analysistest.Run(t, analysistest.TestData(), seams.Analyzer, "latest")
 }
 
 // TestRegistrationIsWellFormed pins the yze wiring.

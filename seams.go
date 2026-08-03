@@ -44,9 +44,14 @@
 //     whose import path contains a `cmd` element, is where the real world is
 //     supposed to be wired in.
 //   - Test files are out of scope: reaching for a real resource in a test is
-//     the test's business. A test-SUPPORT package (`internal/pgtest`,
-//     `tests/harness`) is not a test file and is not exempt, because nothing
-//     in the source distinguishes it from production code.
+//     the test's business. A test-SUPPORT package is out of scope for the same
+//     reason, recognised by the one property that proves it — a NON-test file
+//     importing `testing`. `internal/pgtest`, `tests/harness`, and
+//     `internal/testutil` all carry it, and production code cannot: importing
+//     `testing` outside a _test.go file links the framework's `-test.*` flag
+//     registration into every binary that transitively imports the package.
+//     The package NAME is deliberately not consulted, because `pgtest` and
+//     `latest` are the same string shape and only one of them is a word.
 //   - Only genuinely impure entry points are listed. `time.Since` and duration
 //     arithmetic are pure functions of their arguments; `rand.New(rand.NewPCG(…))`
 //     builds a generator from an explicit, reproducible source. Neither is
@@ -69,8 +74,6 @@ package seams
 import (
 	"go/ast"
 	"go/types"
-	"slices"
-	"strings"
 
 	goyze "github.com/gomatic/go-yze"
 	"golang.org/x/tools/go/analysis"
@@ -96,17 +99,11 @@ var Registration = goyze.Registration{
 	Analyzer:   Analyzer,
 }
 
-// packagePath is the import path of the package under analysis.
-type packagePath string
-
-// packageName is the name in the package clause of the package under analysis.
-type packageName string
-
 // run reports every direct call to an impure stdlib entry point in the
-// package's non-test files, unless the package is a composition root or the
+// package's non-test files, unless the package is out of scope wholesale or the
 // call sits inside a declared boundary.
 func run(pass *analysis.Pass) (any, error) {
-	if isCompositionRoot(packagePath(pass.Pkg.Path()), packageName(pass.Pkg.Name())) {
+	if isExempt(pass) {
 		return nil, nil
 	}
 	boundary := adapters(pass)
@@ -116,20 +113,6 @@ func run(pass *analysis.Pass) (any, error) {
 		}
 	}
 	return nil, nil
-}
-
-// isCompositionRoot reports whether the package is the place the real world is
-// meant to be wired in: a `main` package, or anything beneath a `cmd` element
-// of an import path. Those packages exist precisely to hand real collaborators
-// to the packages that took them as parameters.
-func isCompositionRoot(at packagePath, name packageName) bool {
-	return name == "main" || slices.Contains(strings.Split(string(at), "/"), "cmd")
-}
-
-// isTestFile reports whether file is a _test.go file, where reaching for a real
-// resource is the test's own business.
-func isTestFile(pass *analysis.Pass, file *ast.File) bool {
-	return strings.HasSuffix(pass.Fset.File(file.Pos()).Name(), "_test.go")
 }
 
 // checkFile reports each impure call in one file, declaration by declaration
