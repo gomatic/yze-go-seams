@@ -162,12 +162,13 @@ const (
 
 // inspectCalls reports each impure call beneath node.
 func inspectCalls(pass *analysis.Pass, node ast.Node, policy literalPolicy) {
+	branching := branchingClocks(node)
 	ast.Inspect(node, func(n ast.Node) bool {
 		if _, ok := n.(*ast.FuncLit); ok && policy == pastLiterals {
 			return false
 		}
 		if call, ok := n.(*ast.CallExpr); ok {
-			reportCall(pass, call)
+			reportCall(pass, call, branching)
 		}
 		return true
 	})
@@ -175,10 +176,12 @@ func inspectCalls(pass *analysis.Pass, node ast.Node, policy literalPolicy) {
 
 // reportCall anchors a finding at the callee — the text a reader would replace
 // with a parameter or a seam.
-func reportCall(pass *analysis.Pass, call *ast.CallExpr) {
-	if at, ok := reached(pass.TypesInfo, call.Fun); ok {
-		pass.Reportf(call.Fun.Pos(), message, string(at), string(at))
+func reportCall(pass *analysis.Pass, call *ast.CallExpr, branching map[*ast.CallExpr]bool) {
+	at, ok := reached(pass.TypesInfo, call.Fun)
+	if !ok || (at == clockSymbol && !branching[call]) {
+		return
 	}
+	pass.Reportf(call.Fun.Pos(), message, string(at), string(at))
 }
 
 // reached names the impure stdlib symbol a callee reaches for, in either of the

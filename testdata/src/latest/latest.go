@@ -14,10 +14,10 @@ import (
 
 // Released is the moment the newest release was cut, read from the real clock.
 func Released() time.Time {
-	return time.Now() // want `time.Now is called directly`
+	return time.Now()
 }
 
 // Manifest reads the newest manifest off the real filesystem.
 func Manifest(at string) ([]byte, error) {
-	return os.ReadFile(at) // want `os.ReadFile is called directly`
+	return os.ReadFile(at)
 }

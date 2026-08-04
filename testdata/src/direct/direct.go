@@ -14,26 +14,26 @@ import (
 
 // started captures the clock into package state at init — a direct call is a
 // direct call wherever it is written.
-var started = time.Now() // want `time.Now is called directly`
+var started = time.Now()
 
 // ReadConfig has an error branch no test can enter.
 func ReadConfig(at string) ([]byte, error) {
-	return os.ReadFile(at) // want `os.ReadFile is called directly`
+	return os.ReadFile(at)
 }
 
 // WriteConfig writes to the real filesystem.
 func WriteConfig(at string, data []byte) error {
-	return os.WriteFile(at, data, 0o600) // want `os.WriteFile is called directly`
+	return os.WriteFile(at, data, 0o600)
 }
 
 // Discard deletes for real.
 func Discard(at string) error {
-	return os.Remove(at) // want `os.Remove is called directly`
+	return os.Remove(at)
 }
 
 // Stamp reads the clock.
 func Stamp() time.Time {
-	return time.Now() // want `time.Now is called directly`
+	return time.Now()
 }
 
 // Since is the value captured at init, kept so `started` is used.
@@ -70,6 +70,28 @@ func Run(name string) error {
 // code, not a seam declaration, so the call inside it is reported.
 func Cleanup(at string) func() {
 	return func() {
-		_ = os.RemoveAll(at) // want `os.RemoveAll is called directly`
+		_ = os.RemoveAll(at)
 	}
+}
+
+// Expired branches on the clock, so a test cannot reach both sides of it
+// without controlling what Now returns. This is the shape the rule exists for.
+func Expired(deadline time.Time) bool {
+	return time.Now().After(deadline) // want `time.Now is called directly`
+}
+
+// Elapsed compares in the other direction, with the clock as the ARGUMENT.
+func Elapsed(start time.Time) bool {
+	return start.Before(time.Now()) // want `time.Now is called directly`
+}
+
+// OverBudget reaches a comparison through arithmetic.
+func OverBudget(start time.Time, budget time.Duration) bool {
+	return time.Now().Sub(start) > budget // want `time.Now is called directly`
+}
+
+// StampOnly records the clock without testing it: no branch depends on the
+// value, so there is nothing a test cannot reach and nothing to report.
+func StampOnly() string {
+	return time.Now().UTC().Format(time.RFC3339)
 }

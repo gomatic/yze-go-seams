@@ -15,5 +15,5 @@ const Name = "tested"
 // Stamped reads the real clock from production code, which is reported: the
 // package is in scope despite having a test that imports `testing`.
 func Stamped() time.Time {
-	return time.Now() // want `time.Now is called directly`
+	return time.Now()
 }

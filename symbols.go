@@ -64,29 +64,25 @@ var impureFuncs = map[symbol]bool{
 	"crypto/rand.Read":  true,
 	"crypto/rand.Text":  true,
 
-	// The filesystem.
-	"os.Chdir":      true,
-	"os.Chmod":      true,
-	"os.Chown":      true,
-	"os.Create":     true,
-	"os.CreateTemp": true,
-	"os.Getwd":      true,
-	"os.Link":       true,
-	"os.Lstat":      true,
-	"os.Mkdir":      true,
-	"os.MkdirAll":   true,
-	"os.MkdirTemp":  true,
-	"os.Open":       true,
-	"os.OpenFile":   true,
-	"os.ReadDir":    true,
-	"os.ReadFile":   true,
-	"os.Remove":     true,
-	"os.RemoveAll":  true,
-	"os.Rename":     true,
-	"os.Stat":       true,
-	"os.Symlink":    true,
-	"os.Truncate":   true,
-	"os.WriteFile":  true,
+	// The filesystem is DELIBERATELY ABSENT. It was on this list, and it was
+	// wrong: it produced 146 of 187 findings across 105 modules, none of them a
+	// defect.
+	//
+	// The rule's premise is that the branches around the call cannot be reached
+	// from a test. That is true of the clock and the hidden random source, and
+	// false of the filesystem — t.TempDir gives a test a real directory, and a
+	// bad path reaches the failure branch. gomatic/go-archive settles it: a
+	// filesystem library at 100% coverage, calling os directly throughout. A
+	// rule cannot demand a seam for something already fully covered without one.
+	//
+	// Worse, the demand was self-defeating on the packages that exist precisely
+	// to BE the filesystem seam. Telling an adapter to inject the call it was
+	// written to wrap only moves the untestable line somewhere else.
+	//
+	// A genuinely unreachable filesystem branch — a rename failing midway — is
+	// still handled by a package-level function var, which the standard
+	// sanctions. That is an option where a test needs it, not a shape every call
+	// site owes.
 
 	// The network.
 	"net.Dial":                   true,

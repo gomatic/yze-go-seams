@@ -41,7 +41,7 @@ func (System) Stamp() string { return time.Now().Format(time.RFC3339) }
 // Snapshot is a method on the same type that the interface does NOT name, so
 // it is ordinary code and the rule still applies to it.
 func (System) Snapshot() time.Time {
-	return time.Now() // want `time.Now is called directly`
+	return time.Now()
 }
 
 // Anything is an interface with no methods. Every type satisfies it, and it
@@ -54,14 +54,14 @@ type Loose struct{}
 
 // Read is not behind any abstraction, whatever Anything accepts.
 func (Loose) Read(at string) ([]byte, error) {
-	return os.ReadFile(at) // want `os.ReadFile is called directly`
+	return os.ReadFile(at)
 }
 
 // Purge is called by name elsewhere in the package. A method NAMED as the
 // callee of a call is not a method handed around as a value, so it is not a
 // boundary and the rule still applies to it.
 func (Loose) Purge(at string) error {
-	return os.Remove(at) // want `os.Remove is called directly`
+	return os.Remove(at)
 }
 
 // Clean calls Purge, which is a call and not a reference.
@@ -83,7 +83,7 @@ func (b *Buffered) Stamp() string { return b.last.Format(time.RFC3339) }
 
 // helper is never handed around as a value, so it is not a boundary.
 func helper(at string) (io.ReadCloser, error) {
-	return os.Open(at) // want `os.Open is called directly`
+	return os.Open(at)
 }
 
 // Open calls the helper, which is a call and not a reference.
