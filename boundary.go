@@ -13,11 +13,12 @@ import (
 type exemptions map[types.Object]bool
 
 // adapters is the set of declarations that are the package's own boundary with
-// the real world, in the two shapes a Go package can express one.
+// the real world, in the three shapes a Go package can express one.
 func adapters(pass *analysis.Pass) exemptions {
 	boundary := exemptions{}
 	collectValueFuncs(pass, boundary)
 	collectInterfaceMethods(pass, boundary)
+	collectFuncTypeImplementations(pass, boundary)
 	return boundary
 }
 
@@ -77,6 +78,64 @@ func markValueUses(pass *analysis.Pass, file *ast.File, called map[*ast.Ident]bo
 func markPackageFunc(pass *analysis.Pass, ident *ast.Ident, boundary exemptions) {
 	if fn, ok := pass.TypesInfo.Uses[ident].(*types.Func); ok {
 		boundary[fn] = true
+	}
+}
+
+// collectFuncTypeImplementations marks every package-level function whose
+// signature is identical to a function type the package itself declares.
+//
+// A declared function type is a seam by declaration — `type Command func(…)`
+// exists so a caller can hold one and a test can substitute one — and a
+// package function with an identical signature is the seam's real
+// implementation. The binding often happens OUTSIDE the package — a
+// composition root injecting the exported default, beyond the in-package value
+// walk's sight — so the type identity is the evidence that the seam exists.
+func collectFuncTypeImplementations(pass *analysis.Pass, boundary exemptions) {
+	scope := pass.Pkg.Scope()
+	sigs := declaredFuncSignatures(scope)
+	if len(sigs) == 0 {
+		return
+	}
+	for _, name := range scope.Names() {
+		markFuncTypeDefault(scope.Lookup(name), sigs, boundary)
+	}
+}
+
+// declaredFuncSignatures is the signature of every named function type the
+// package declares.
+func declaredFuncSignatures(scope *types.Scope) []*types.Signature {
+	var sigs []*types.Signature
+	for _, name := range scope.Names() {
+		if sig, ok := namedFuncType(scope.Lookup(name)); ok {
+			sigs = append(sigs, sig)
+		}
+	}
+	return sigs
+}
+
+// namedFuncType is the signature a type name denotes, if it denotes a function
+// type.
+func namedFuncType(obj types.Object) (*types.Signature, bool) {
+	named, ok := obj.(*types.TypeName)
+	if !ok {
+		return nil, false
+	}
+	sig, ok := types.Unalias(named.Type()).Underlying().(*types.Signature)
+	return sig, ok
+}
+
+// markFuncTypeDefault marks obj when it is a package function whose signature
+// is identical to one of the declared function types.
+func markFuncTypeDefault(obj types.Object, sigs []*types.Signature, boundary exemptions) {
+	fn, ok := obj.(*types.Func)
+	if !ok {
+		return
+	}
+	for _, sig := range sigs {
+		if types.Identical(fn.Type(), sig) {
+			boundary[fn] = true
+			return
+		}
 	}
 }
 

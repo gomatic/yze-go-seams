@@ -49,6 +49,16 @@ func TestTheBoundaryBehindASeamIsSilent(t *testing.T) {
 	analysistest.Run(t, analysistest.TestData(), seams.Analyzer, "adapter")
 }
 
+// TestAFuncTypeDefaultImplementationIsSilent pins the third boundary shape: a
+// named function type the package declares IS a seam declaration, and the
+// package function whose signature is identical to it is that seam's real
+// implementation — bound at a composition root the in-package value walk
+// cannot see. The same fixture pins the boundary: a function matching no
+// declared function type is still reported.
+func TestAFuncTypeDefaultImplementationIsSilent(t *testing.T) {
+	analysistest.Run(t, analysistest.TestData(), seams.Analyzer, "functype")
+}
+
 // TestAMethodOnAStdlibGlobalIsReported pins the one-selector-deeper shape:
 // http.DefaultClient.Do sends the request through process-wide state no test
 // can replace. The same fixture pins the boundary — http.DefaultServeMux is
