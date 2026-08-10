@@ -106,3 +106,9 @@ func OverBudget(start time.Time, budget time.Duration) bool {
 func StampOnly() string {
 	return time.Now().UTC().Format(time.RFC3339)
 }
+
+// UntilDeadline branches on the clock through time.Until, which reads the
+// clock exactly as Now does.
+func UntilDeadline(deadline time.Time) bool {
+	return time.Until(deadline) <= 0 // want `time.Until is called directly`
+}

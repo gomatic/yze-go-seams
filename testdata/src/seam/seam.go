@@ -82,3 +82,21 @@ func (s Store) Fetch(req *http.Request) (*http.Response, error) { return s.clien
 // function and the client is the injection this rule exists to encourage — a
 // reference, not a call.
 func Inject() Store { return Store{read: os.ReadFile, client: http.DefaultClient} }
+
+// Remaining stamps how long is left, through time.Until: a returned
+// measurement is a stamp, exactly like Elapsed's.
+func Remaining(deadline time.Time) time.Duration { return time.Until(deadline) }
+
+// Measured stamps the same measurement through the Sub spelling Since is
+// defined to equal: the two spellings draw one silent verdict.
+func Measured(start time.Time) time.Duration { return time.Now().Sub(start) }
+
+// Ordered stamps an ordering: a returned Compare is a value, not a branch.
+func Ordered(a, b time.Time) int { return a.Compare(b) }
+
+// Recorded hands a clock reading to an injected recorder and branches on the
+// RECORDER's error: the comparison judges the sink, not the clock, and the
+// stamp doctrine keeps the reading silent.
+func Recorded(sink func(time.Duration) error, start time.Time) bool {
+	return sink(time.Since(start)) != nil
+}

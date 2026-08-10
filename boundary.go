@@ -38,48 +38,108 @@ func adapters(pass *analysis.Pass) exemptions {
 func collectValueFuncs(pass *analysis.Pass, boundary exemptions) {
 	for _, file := range pass.Files {
 		if !isTestFile(pass, file) {
-			markValueUses(pass, file, calleeIdents(file), inertIdents(file), boundary)
+			markValueUses(pass, file, calleeIdents(file), inertIdents(pass, file), boundary)
 		}
 	}
 }
 
-// inertIdents is the set of identifiers inside untyped all-blank var
-// declarations — `var _ = fn` — which reference a value nothing can replace.
-func inertIdents(file *ast.File) map[*ast.Ident]bool {
+// inertIdents is the set of identifiers referenced only as a hold nothing can
+// replace: the values at BLANK positions of assignments and var declarations,
+// in either spelling — `var _ = fn` and the statement form `_ = fn` alike.
+// The one exception is a declaration whose type annotation denotes a FUNCTION
+// type: `var _ Command = ExecCommand` is the package asserting, checked by the
+// compiler, that the function backs a declared seam shape — while `var _ any =
+// fn` checks nothing, since every value satisfies any, and stays inert.
+func inertIdents(pass *analysis.Pass, file *ast.File) map[*ast.Ident]bool {
 	inert := map[*ast.Ident]bool{}
 	ast.Inspect(file, func(n ast.Node) bool {
-		if spec, ok := n.(*ast.ValueSpec); ok && isUntypedBlankSpec(spec) {
-			markSpecValues(spec, inert)
+		switch at := n.(type) {
+		case *ast.ValueSpec:
+			if !funcTypeAnnotation(pass, at.Type) {
+				markBlankPositions(identExprs(at.Names), at.Values, inert)
+			}
+		case *ast.AssignStmt:
+			markBlankPositions(at.Lhs, at.Rhs, inert)
 		}
 		return true
 	})
 	return inert
 }
 
-// isUntypedBlankSpec reports a var spec with no type annotation whose every
-// name is the blank identifier.
-func isUntypedBlankSpec(spec *ast.ValueSpec) bool {
-	if spec.Type != nil {
+// funcTypeAnnotation reports a type annotation denoting a function type — the
+// compiler-checked seam-shape assertion the exemption honors.
+func funcTypeAnnotation(pass *analysis.Pass, annotation ast.Expr) bool {
+	if annotation == nil {
 		return false
 	}
-	for _, name := range spec.Names {
-		if name.Name != "_" {
+	at := pass.TypesInfo.TypeOf(annotation)
+	if at == nil {
+		return false
+	}
+	_, ok := at.Underlying().(*types.Signature)
+	return ok
+}
+
+// identExprs widens declared names to expressions, so declarations and
+// assignments share one blank-position walk.
+func identExprs(names []*ast.Ident) []ast.Expr {
+	exprs := make([]ast.Expr, len(names))
+	for i, name := range names {
+		exprs[i] = name
+	}
+	return exprs
+}
+
+// markBlankPositions marks the value identifiers held only by a blank target.
+// Aligned lists are judged position by position; a multi-value binding from
+// one expression is inert only when EVERY target is blank, since any named
+// sibling holds the whole result.
+func markBlankPositions(targets, values []ast.Expr, inert map[*ast.Ident]bool) {
+	if len(targets) == len(values) {
+		markAlignedBlanks(targets, values, inert)
+		return
+	}
+	if !allBlankExprs(targets) {
+		return
+	}
+	for _, value := range values {
+		markIdentsUnder(value, inert)
+	}
+}
+
+// markAlignedBlanks marks each blank position's value in an aligned binding.
+func markAlignedBlanks(targets, values []ast.Expr, inert map[*ast.Ident]bool) {
+	for i, target := range targets {
+		if isBlank(target) {
+			markIdentsUnder(values[i], inert)
+		}
+	}
+}
+
+// isBlank reports the blank identifier.
+func isBlank(target ast.Expr) bool {
+	ident, ok := target.(*ast.Ident)
+	return ok && ident.Name == "_"
+}
+
+// allBlankExprs reports whether every target is the blank identifier.
+func allBlankExprs(targets []ast.Expr) bool {
+	for _, target := range targets {
+		if !isBlank(target) {
 			return false
 		}
 	}
-	return len(spec.Names) > 0
+	return len(targets) > 0
 }
 
-// markSpecValues records every identifier under the spec's value expressions.
-func markSpecValues(spec *ast.ValueSpec, inert map[*ast.Ident]bool) {
-	for _, value := range spec.Values {
-		ast.Inspect(value, func(n ast.Node) bool {
-			if ident, ok := n.(*ast.Ident); ok {
-				inert[ident] = true
-			}
-			return true
-		})
-	}
+// markIdentsUnder records every identifier beneath one value expression.
+func markIdentsUnder(value ast.Expr, inert map[*ast.Ident]bool) {
+	ast.Inspect(value, func(n ast.Node) bool {
+		if ident, ok := n.(*ast.Ident); ok {
+			inert[ident] = true
+		}
+		return true
+	})
 }
 
 // calleeIdents is the set of identifiers naming the callee of a call, which

@@ -19,15 +19,18 @@ var clockSymbols = map[string]bool{
 	"time.Until": true,
 }
 
-// comparisonMethods are the time.Time methods that turn a timestamp into a
-// branch. A test cannot steer them at a direct call site, because it cannot
-// choose what the clock returns.
+// comparisonMethods are the time.Time methods whose RESULT is a verdict — a
+// boolean the code branches on. A test cannot steer them at a direct call
+// site, because it cannot choose what the clock returns. Sub and Compare are
+// deliberately absent: each returns a VALUE (a Duration, an ordering), which
+// is a stamp until an operator compares it — `time.Now().Sub(start)` returned
+// whole is the same measurement `time.Since(start)` is, and the two spellings
+// must draw one verdict. The comparison operator path catches both when a
+// branch actually happens.
 var comparisonMethods = map[string]bool{
-	"After":   true,
-	"Before":  true,
-	"Equal":   true,
-	"Compare": true,
-	"Sub":     true,
+	"After":  true,
+	"Before": true,
+	"Equal":  true,
 }
 
 // branchingClocks collects the time.Now calls beneath node whose value reaches
@@ -96,14 +99,24 @@ func markComparisonReceiver(call *ast.CallExpr, branching map[*ast.CallExpr]bool
 	}
 }
 
-// markClocks records every call beneath expr, leaving the symbol check to the
-// caller — reportCall already resolves whether a call is time.Now, and
-// duplicating that resolution here would be a second place to get it wrong.
+// markClocks records the calls whose VALUE reaches the surrounding
+// comparison, leaving the symbol check to the caller — reportCall already
+// resolves whether a call is a clock read, and duplicating that resolution
+// here would be a second place to get it wrong.
+//
+// The walk follows a call's RECEIVER chain and stops at its arguments: in
+// `sink(time.Since(start)) != nil` the comparison judges sink's error, the
+// clock reading was consumed by the call, and the stamp doctrine keeps it
+// silent — while `time.Now().Sub(start) > ttl` marks Sub and, through its
+// receiver, the Now it read.
 func markClocks(expr ast.Node, branching map[*ast.CallExpr]bool) {
 	ast.Inspect(expr, func(n ast.Node) bool {
-		if call, ok := n.(*ast.CallExpr); ok {
-			branching[call] = true
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
 		}
-		return true
+		branching[call] = true
+		markClocks(call.Fun, branching)
+		return false
 	})
 }

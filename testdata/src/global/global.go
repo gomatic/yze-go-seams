@@ -16,3 +16,9 @@ func Fetch(req *http.Request) (*http.Response, error) {
 func Route(pattern string, handler http.Handler) {
 	http.DefaultServeMux.Handle(pattern, handler)
 }
+
+// RoundTrip sends through the package-global transport: the same wire as
+// DefaultClient, one layer down.
+func RoundTrip(req *http.Request) (*http.Response, error) {
+	return http.DefaultTransport.RoundTrip(req) // want `net/http.DefaultTransport is called directly`
+}

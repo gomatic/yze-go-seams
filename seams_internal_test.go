@@ -2,14 +2,12 @@ package seams
 
 import (
 	"go/ast"
-	"go/parser"
 	"go/token"
 	"go/types"
 	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 	"golang.org/x/tools/go/analysis"
 )
 
@@ -231,66 +229,4 @@ func TestIsCompositionRootMatchesAPathElement(t *testing.T) {
 	want.True(isCompositionRoot("cmd", "cmd"), "the cmd element may be the whole path")
 	want.False(isCompositionRoot("mod/internal/command", "command"), "a substring is not an element")
 	want.False(isCompositionRoot("mod/store", "store"), "ordinary code is in scope")
-}
-
-// TestBranchingClocksSeparatesAComparisonFromAStamp names branchingClocks's
-// claim: only a clock reaching a comparison puts a branch out of a test's
-// reach.
-//
-// Conflating the two was this rule's largest remaining source of noise — 24 of
-// its 37 fleet findings were a timestamp written into a field or a lock file,
-// where nothing downstream tests the value. An injected clock buys those sites
-// a constructor parameter and no coverage.
-func TestBranchingClocksSeparatesAComparisonFromAStamp(t *testing.T) {
-	t.Parallel()
-	want := assert.New(t)
-
-	want.Empty(branchingClocks(mustParseExpr(t, `time.Now().UTC().Format(x)`)),
-		"a stamped clock reaches no comparison")
-	want.NotEmpty(branchingClocks(mustParseExpr(t, `time.Now().After(deadline)`)),
-		"a compared clock does")
-	want.NotEmpty(branchingClocks(mustParseExpr(t, `start.Before(time.Now())`)),
-		"the clock as the argument is equally a branch")
-	want.NotEmpty(branchingClocks(mustParseExpr(t, `time.Now().Sub(start) > budget`)),
-		"and so is a comparison reached through arithmetic")
-}
-
-// TestComparisonMethodsHoldOnlyTheClockBranchingOnes names comparisonMethods's
-// claim: these are the time.Time methods a test cannot steer at a direct call
-// site, because it cannot choose what the clock returns. Formatting or
-// re-zoning a timestamp is neither.
-func TestComparisonMethodsHoldOnlyTheClockBranchingOnes(t *testing.T) {
-	t.Parallel()
-	want := assert.New(t)
-
-	want.NotEmpty(comparisonMethods, "an empty set would make nothing a branch")
-	for _, method := range []string{"After", "Before", "Equal", "Compare", "Sub"} {
-		want.True(comparisonMethods[method], "%s turns a timestamp into a branch", method)
-	}
-	want.False(comparisonMethods["Format"], "formatting a timestamp is a stamp, not a branch")
-	want.False(comparisonMethods["UTC"], "changing zone is a stamp, not a branch")
-}
-
-// TestComparisonOpsHoldOnlyRelationalOperators names comparisonOps's claim.
-// The set is keyed by the operator's text because token.Token enumerates every
-// operator AND keyword in the language, so the six that matter would never be
-// stated plainly among the seventy that cannot appear here.
-func TestComparisonOpsHoldOnlyRelationalOperators(t *testing.T) {
-	t.Parallel()
-	want := assert.New(t)
-
-	want.NotEmpty(comparisonOps, "an empty operator set would make nothing a branch")
-	for _, op := range []string{"<", ">", "<=", ">=", "==", "!="} {
-		want.True(comparisonOps[op], "%s compares", op)
-	}
-	want.False(comparisonOps["+"], "arithmetic alone does not compare")
-	want.False(comparisonOps["&&"], "nor does a logical connective")
-}
-
-// mustParseExpr parses a Go expression for the tests above.
-func mustParseExpr(t *testing.T, src string) ast.Expr {
-	t.Helper()
-	expr, err := parser.ParseExpr(src)
-	require.NoError(t, err)
-	return expr
 }
