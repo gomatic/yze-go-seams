@@ -16,8 +16,11 @@ type symbol string
 // `rand.New`, `rand.NewPCG`, `rand.NewSource`, `http.NewRequest`, `net.JoinHostPort`
 // are reproducible functions of their inputs and injectable by construction.
 var impureFuncs = map[symbol]bool{
-	// The clock.
-	"time.Now": true,
+	// The clock. Since and Until are shorthand for a time.Now the stdlib takes
+	// on the caller's behalf, so they read the clock exactly as Now does.
+	"time.Now":   true,
+	"time.Since": true,
+	"time.Until": true,
 
 	// The package-global random source. A generator built from an explicit
 	// source is deterministic and needs no seam, so only the top-level
@@ -125,5 +128,7 @@ var impureFuncs = map[symbol]bool{
 // test can replace — `http.DefaultClient.Do(req)` sends the request for real,
 // where an injected `*http.Client` would not.
 var impureGlobals = map[symbol]bool{
-	"net/http.DefaultClient": true,
+	"crypto/rand.Reader":        true,
+	"net/http.DefaultClient":    true,
+	"net/http.DefaultTransport": true,
 }

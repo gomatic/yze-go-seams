@@ -135,9 +135,11 @@ func checkFile(pass *analysis.Pass, boundary exemptions, file *ast.File) {
 // os.CreateTemp(dir, pattern) }` — is the seam ITSELF, written as a closure
 // because the seam's signature differs from the stdlib's. It is the same
 // declaration as `var readFile = os.ReadFile` and is silent for the same
-// reason. A direct call in the initializer that is NOT inside a literal —
-// `var started = time.Now()` — captures the real world into package state at
-// init and is reported.
+// reason. A direct call in the initializer that is NOT inside a literal is
+// judged like any other call site: `var started = time.Now()` is a stamp and
+// stays silent, while an initializer that BRANCHES on the clock —
+// `var expired = time.Now().After(deadline)` — or reaches any non-clock
+// impure symbol is reported.
 func checkDecl(pass *analysis.Pass, boundary exemptions, decl ast.Decl) {
 	if fn, ok := decl.(*ast.FuncDecl); ok {
 		if !boundary[pass.TypesInfo.ObjectOf(fn.Name)] {
@@ -178,7 +180,7 @@ func inspectCalls(pass *analysis.Pass, node ast.Node, policy literalPolicy) {
 // with a parameter or a seam.
 func reportCall(pass *analysis.Pass, call *ast.CallExpr, branching map[*ast.CallExpr]bool) {
 	at, ok := reached(pass.TypesInfo, call.Fun)
-	if !ok || (at == clockSymbol && !branching[call]) {
+	if !ok || (clockSymbols[string(at)] && !branching[call]) {
 		return
 	}
 	pass.Reportf(call.Fun.Pos(), message, string(at), string(at))

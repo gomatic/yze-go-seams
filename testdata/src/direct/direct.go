@@ -12,9 +12,13 @@ import (
 	"time"
 )
 
-// started captures the clock into package state at init — a direct call is a
-// direct call wherever it is written.
+// started stamps the clock into package state at init. A stamp is not a
+// branch, so an initializer's bare time.Now is as silent as any other stamp.
 var started = time.Now()
+
+// expiredAtInit BRANCHES on the clock in an initializer, which is the same
+// unreachable branch wherever it is written.
+var expiredAtInit = time.Now().After(time.Time{}) // want `time.Now is called directly`
 
 // ReadConfig has an error branch no test can enter.
 func ReadConfig(at string) ([]byte, error) {
@@ -68,9 +72,9 @@ func Run(name string) error {
 
 // Cleanup returns a closure written inside a function body. That is ordinary
 // code, not a seam declaration, so the call inside it is reported.
-func Cleanup(at string) func() {
+func Cleanup(name string) func() {
 	return func() {
-		_ = os.RemoveAll(at)
+		_ = exec.Command(name).Run() // want `os/exec.Command is called directly`
 	}
 }
 
@@ -83,6 +87,13 @@ func Expired(deadline time.Time) bool {
 // Elapsed compares in the other direction, with the clock as the ARGUMENT.
 func Elapsed(start time.Time) bool {
 	return start.Before(time.Now()) // want `time.Now is called directly`
+}
+
+// StaleSince spells the same clock-bound branch through time.Since, which is
+// time.Now().Sub in the stdlib's own definition — the common spelling must not
+// silence the shape the rule was written for.
+func StaleSince(start time.Time, ttl time.Duration) bool {
+	return time.Since(start) > ttl // want `time.Since is called directly`
 }
 
 // OverBudget reaches a comparison through arithmetic.

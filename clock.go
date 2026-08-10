@@ -4,13 +4,20 @@ import (
 	"go/ast"
 )
 
-// clockSymbol is the one impure symbol whose findings depend on how the value
-// is USED rather than merely that it was called.
-// It is deliberately UNTYPED: as a typed member of symbol it would read as
-// part of that enum, and the exhaustive check would then demand it as a key in
-// every symbol-keyed map — including impureFuncs, where adding it would change
+// clockSymbols are the impure symbols whose findings depend on how the value
+// is USED rather than merely that it was called: the clock reads. time.Since
+// and time.Until are here because each is shorthand for a time.Now the stdlib
+// takes on the caller's behalf — `time.Since(t)` IS `time.Now().Sub(t)` — so
+// spelling the comparison the common way keeps its finding.
+// The keys are deliberately plain strings, not typed symbol members: as enum
+// members the exhaustive check would demand them as keys in every
+// symbol-keyed map — including impureFuncs, where their absence would change
 // what the analyzer reports.
-const clockSymbol = "time.Now"
+var clockSymbols = map[string]bool{
+	"time.Now":   true,
+	"time.Since": true,
+	"time.Until": true,
+}
 
 // comparisonMethods are the time.Time methods that turn a timestamp into a
 // branch. A test cannot steer them at a direct call site, because it cannot
@@ -35,6 +42,13 @@ var comparisonMethods = map[string]bool{
 // What survives is the shape the rule was written for — `time.Now().After(deadline)`,
 // `time.Now().Sub(start) > ttl` — where the branch genuinely cannot be reached
 // without control of the clock.
+//
+// A KNOWN boundary: the reading is per-expression, so a clock captured into a
+// local first — `now := time.Now(); now.After(deadline)` — is judged a stamp
+// and stays silent. Following the value through locals is intra-procedural
+// dataflow this rule does not attempt; widening it is a deliberate future
+// decision, not an oversight, and the localstamp fixture pins the current
+// behavior so a change here is a change someone chose.
 func branchingClocks(node ast.Node) map[*ast.CallExpr]bool {
 	branching := map[*ast.CallExpr]bool{}
 	ast.Inspect(node, func(n ast.Node) bool {

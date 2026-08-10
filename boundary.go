@@ -13,12 +13,11 @@ import (
 type exemptions map[types.Object]bool
 
 // adapters is the set of declarations that are the package's own boundary with
-// the real world, in the three shapes a Go package can express one.
+// the real world, in the two shapes a Go package can express one.
 func adapters(pass *analysis.Pass) exemptions {
 	boundary := exemptions{}
 	collectValueFuncs(pass, boundary)
 	collectInterfaceMethods(pass, boundary)
-	collectFuncTypeImplementations(pass, boundary)
 	return boundary
 }
 
@@ -30,11 +29,56 @@ func adapters(pass *analysis.Pass) exemptions {
 // construction: something else in the package holds it in a variable or a
 // field that a test can replace. The function is the real implementation
 // behind that seam, and the seam is what the standard asks for.
+//
+// A bare `var _ = fn` is the one value reference that holds nothing: the blank
+// identifier gives a test nothing to replace, so it proves no seam and marks
+// nothing. The TYPED form `var _ Command = ExecCommand` is different in kind —
+// it is the package asserting, checked by the compiler, that the function
+// backs a declared seam type a composition root binds — and it marks.
 func collectValueFuncs(pass *analysis.Pass, boundary exemptions) {
 	for _, file := range pass.Files {
 		if !isTestFile(pass, file) {
-			markValueUses(pass, file, calleeIdents(file), boundary)
+			markValueUses(pass, file, calleeIdents(file), inertIdents(file), boundary)
 		}
+	}
+}
+
+// inertIdents is the set of identifiers inside untyped all-blank var
+// declarations — `var _ = fn` — which reference a value nothing can replace.
+func inertIdents(file *ast.File) map[*ast.Ident]bool {
+	inert := map[*ast.Ident]bool{}
+	ast.Inspect(file, func(n ast.Node) bool {
+		if spec, ok := n.(*ast.ValueSpec); ok && isUntypedBlankSpec(spec) {
+			markSpecValues(spec, inert)
+		}
+		return true
+	})
+	return inert
+}
+
+// isUntypedBlankSpec reports a var spec with no type annotation whose every
+// name is the blank identifier.
+func isUntypedBlankSpec(spec *ast.ValueSpec) bool {
+	if spec.Type != nil {
+		return false
+	}
+	for _, name := range spec.Names {
+		if name.Name != "_" {
+			return false
+		}
+	}
+	return len(spec.Names) > 0
+}
+
+// markSpecValues records every identifier under the spec's value expressions.
+func markSpecValues(spec *ast.ValueSpec, inert map[*ast.Ident]bool) {
+	for _, value := range spec.Values {
+		ast.Inspect(value, func(n ast.Node) bool {
+			if ident, ok := n.(*ast.Ident); ok {
+				inert[ident] = true
+			}
+			return true
+		})
 	}
 }
 
@@ -62,10 +106,16 @@ func markCallee(called map[*ast.Ident]bool, fun ast.Expr) {
 }
 
 // markValueUses marks the package functions this file names outside call
-// position.
-func markValueUses(pass *analysis.Pass, file *ast.File, called map[*ast.Ident]bool, boundary exemptions) {
+// position, excluding references an untyped blank var makes inertly.
+func markValueUses(
+	pass *analysis.Pass,
+	file *ast.File,
+	called map[*ast.Ident]bool,
+	inert map[*ast.Ident]bool,
+	boundary exemptions,
+) {
 	ast.Inspect(file, func(n ast.Node) bool {
-		if ident, ok := n.(*ast.Ident); ok && !called[ident] {
+		if ident, ok := n.(*ast.Ident); ok && !called[ident] && !inert[ident] {
 			markPackageFunc(pass, ident, boundary)
 		}
 		return true
@@ -78,64 +128,6 @@ func markValueUses(pass *analysis.Pass, file *ast.File, called map[*ast.Ident]bo
 func markPackageFunc(pass *analysis.Pass, ident *ast.Ident, boundary exemptions) {
 	if fn, ok := pass.TypesInfo.Uses[ident].(*types.Func); ok {
 		boundary[fn] = true
-	}
-}
-
-// collectFuncTypeImplementations marks every package-level function whose
-// signature is identical to a function type the package itself declares.
-//
-// A declared function type is a seam by declaration — `type Command func(…)`
-// exists so a caller can hold one and a test can substitute one — and a
-// package function with an identical signature is the seam's real
-// implementation. The binding often happens OUTSIDE the package — a
-// composition root injecting the exported default, beyond the in-package value
-// walk's sight — so the type identity is the evidence that the seam exists.
-func collectFuncTypeImplementations(pass *analysis.Pass, boundary exemptions) {
-	scope := pass.Pkg.Scope()
-	sigs := declaredFuncSignatures(scope)
-	if len(sigs) == 0 {
-		return
-	}
-	for _, name := range scope.Names() {
-		markFuncTypeDefault(scope.Lookup(name), sigs, boundary)
-	}
-}
-
-// declaredFuncSignatures is the signature of every named function type the
-// package declares.
-func declaredFuncSignatures(scope *types.Scope) []*types.Signature {
-	var sigs []*types.Signature
-	for _, name := range scope.Names() {
-		if sig, ok := namedFuncType(scope.Lookup(name)); ok {
-			sigs = append(sigs, sig)
-		}
-	}
-	return sigs
-}
-
-// namedFuncType is the signature a type name denotes, if it denotes a function
-// type.
-func namedFuncType(obj types.Object) (*types.Signature, bool) {
-	named, ok := obj.(*types.TypeName)
-	if !ok {
-		return nil, false
-	}
-	sig, ok := types.Unalias(named.Type()).Underlying().(*types.Signature)
-	return sig, ok
-}
-
-// markFuncTypeDefault marks obj when it is a package function whose signature
-// is identical to one of the declared function types.
-func markFuncTypeDefault(obj types.Object, sigs []*types.Signature, boundary exemptions) {
-	fn, ok := obj.(*types.Func)
-	if !ok {
-		return
-	}
-	for _, sig := range sigs {
-		if types.Identical(fn.Type(), sig) {
-			boundary[fn] = true
-			return
-		}
 	}
 }
 

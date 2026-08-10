@@ -78,12 +78,15 @@ func TestReachedIsSilentOnACallThroughAnIdentifier(t *testing.T) {
 // TestReachedNamesOnlyListedEntryPoints pins the list itself, in both
 // directions and at the boundary that shrank it.
 //
-// time.Now is on the list; time.Since is not, so a pure function of its
-// arguments is never mistaken for a reading of the world. os.ReadFile is not
-// on it either, and that is the deliberate part: the filesystem was removed
-// after producing 146 of 187 fleet findings with no defect among them, because
-// t.TempDir reaches those branches and a rule cannot demand a seam for
-// something already fully covered without one.
+// time.Now, time.Since, and time.Until are all on the list: the stdlib defines
+// Since and Until as shorthand for a Now it takes on the caller's behalf, so
+// the common spelling reads the clock exactly as the explicit one does — an
+// earlier revision called Since "arithmetic over its argument", which was
+// false and guarded a real miss. os.ReadFile is NOT on the list, and that is
+// the deliberate part: the filesystem was removed after producing 146 of 187
+// fleet findings with no defect among them, because t.TempDir reaches those
+// branches and a rule cannot demand a seam for something already fully covered
+// without one.
 func TestReachedNamesOnlyListedEntryPoints(t *testing.T) {
 	t.Parallel()
 	want := assert.New(t)
@@ -93,9 +96,10 @@ func TestReachedNamesOnlyListedEntryPoints(t *testing.T) {
 	want.True(ok)
 	want.Equal(symbol("time.Now"), got)
 
-	pureSel, pureInfo := pkgSelector("time", "time", "Since")
-	_, ok = reached(pureInfo, pureSel)
-	want.False(ok, "time.Since is arithmetic over its argument")
+	sinceSel, sinceInfo := pkgSelector("time", "time", "Since")
+	got, ok = reached(sinceInfo, sinceSel)
+	want.True(ok, "time.Since is time.Now().Sub in the stdlib's own definition")
+	want.Equal(symbol("time.Since"), got)
 
 	fsSel, fsInfo := pkgSelector("os", "os", "ReadFile")
 	_, ok = reached(fsInfo, fsSel)

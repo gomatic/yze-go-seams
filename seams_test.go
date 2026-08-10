@@ -28,10 +28,12 @@ func TestTheBlessedSeamIsSilent(t *testing.T) {
 }
 
 // TestPureSiblingsAreSilent pins the false positives the obvious
-// implementation would produce. time.Since and Time.Add are pure functions of
-// their arguments, and rand.New/rand.NewPCG build a generator from a seed the
-// caller chose — all reproducible, none in need of a seam. They live in the
-// same fixture as the conforming forms because a single silent package is the
+// implementation would produce. Time.Add is a pure function of its arguments;
+// a RETURNED time.Since is a clock read that only stamps, silent under the
+// branching narrowing (the branching spelling is reported in the direct and
+// latest fixtures); and rand.New/rand.NewPCG build a generator from a seed the
+// caller chose — reproducible, in need of no seam. They live in the same
+// fixture as the conforming forms because a single silent package is the
 // claim: nothing in it is reported.
 func TestPureSiblingsAreSilent(t *testing.T) {
 	analysistest.Run(t, analysistest.TestData(), seams.Analyzer, "seam")
@@ -49,13 +51,15 @@ func TestTheBoundaryBehindASeamIsSilent(t *testing.T) {
 	analysistest.Run(t, analysistest.TestData(), seams.Analyzer, "adapter")
 }
 
-// TestAFuncTypeDefaultImplementationIsSilent pins the third boundary shape: a
-// named function type the package declares IS a seam declaration, and the
-// package function whose signature is identical to it is that seam's real
-// implementation — bound at a composition root the in-package value walk
-// cannot see. The same fixture pins the boundary: a function matching no
-// declared function type is still reported.
-func TestAFuncTypeDefaultImplementationIsSilent(t *testing.T) {
+// TestAFuncTypeSeamNeedsBindingEvidence pins how a function-type seam earns
+// its exemption: the typed blank assertion `var _ Runner = ExecRun` is
+// compiler-checked evidence the function backs the declared seam type, and it
+// exempts. The same fixture pins both refusals: a function that merely MATCHES
+// a declared type's signature is still reported (shape is not evidence — a
+// `type task func()` would otherwise silence every niladic function), and a
+// bare untyped `var _ = fn` is still reported (the blank holds nothing a test
+// could replace).
+func TestAFuncTypeSeamNeedsBindingEvidence(t *testing.T) {
 	analysistest.Run(t, analysistest.TestData(), seams.Analyzer, "functype")
 }
 
@@ -114,4 +118,12 @@ func TestRegistrationIsWellFormed(t *testing.T) {
 	assert.NoError(t, seams.Registration.Validate())
 	assert.Equal(t, "yze/seams", seams.Registration.RuleID())
 	assert.Same(t, seams.Analyzer, seams.Registration.Analyzer)
+}
+
+// TestALocalClockCaptureIsTheDocumentedBoundary pins the per-expression limit
+// of the branching-clock reading: `now := time.Now(); now.After(deadline)` is
+// silent, so widening the rule to follow locals must arrive as a deliberate
+// fixture change, never as drift.
+func TestALocalClockCaptureIsTheDocumentedBoundary(t *testing.T) {
+	analysistest.Run(t, analysistest.TestData(), seams.Analyzer, "localstamp")
 }

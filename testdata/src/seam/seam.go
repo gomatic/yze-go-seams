@@ -7,6 +7,7 @@ import (
 	"math/rand/v2"
 	"net/http"
 	"os"
+	"os/exec"
 	"time"
 )
 
@@ -18,9 +19,16 @@ var readFile = os.ReadFile
 // now is the clock seam.
 var now = time.Now
 
-// openExclusive is the same seam written as a closure, because the seam's
+// runQuiet is the same seam written as a closure, because the seam's
 // signature is not the stdlib's. A function literal in a package-level var
-// initializer is a seam declaration, exactly like the two above.
+// initializer is a seam declaration, exactly like the two above — the
+// subprocess spawn inside it is the seam's own implementation, not a call
+// site that lacks one.
+var runQuiet = func(name string) error {
+	return exec.Command(name).Run()
+}
+
+// openExclusive keeps the original closure-seam shape over the filesystem.
 var openExclusive = func(at string) (*os.File, error) {
 	return os.OpenFile(at, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 }
@@ -32,7 +40,10 @@ func ReadConfig(at string) ([]byte, error) { return readFile(at) }
 // Stamp reads the clock through the seam.
 func Stamp() time.Time { return now() }
 
-// Elapsed is pure arithmetic over its argument, not a reading of the clock.
+// Elapsed reads the clock through time.Since but only STAMPS the result —
+// nothing here branches on it — so it is silent for the same reason a bare
+// time.Now stamp is, not because Since is pure (it is not: it reads the
+// clock on the caller's behalf).
 func Elapsed(from time.Time) time.Duration { return time.Since(from) }
 
 // Deadline is pure arithmetic over its argument.
