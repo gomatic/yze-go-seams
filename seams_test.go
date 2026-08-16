@@ -10,9 +10,16 @@ import (
 )
 
 // TestADirectCallIsReported pins the rule: every impure stdlib entry point on
-// the list — the clock, the global random source, OS entropy, the filesystem,
-// the network, a subprocess — is reported at the callee when it is called
-// through its package, in package state as well as in a function body.
+// the list — the clock, the global random source, OS entropy, the network, a
+// subprocess — is reported at the callee when it is called through its
+// package, in package state as well as in a function body.
+//
+// It pins the list's boundary in the same fixture: the filesystem is
+// deliberately off the list and is silent there beside those reported
+// siblings, and a clock reading inside a NON-comparison binary expression is a
+// stamp rather than a branch. It pins the seam-literal boundary too — a
+// literal bound to a blank, and one buried inside an initializer's expression,
+// are ordinary code and are reported.
 func TestADirectCallIsReported(t *testing.T) {
 	analysistest.Run(t, analysistest.TestData(), seams.Analyzer, "direct")
 }
@@ -83,9 +90,10 @@ func TestACompositionRootByClauseIsExempt(t *testing.T) {
 	analysistest.Run(t, analysistest.TestData(), seams.Analyzer, "root")
 }
 
-// TestATestFileIsExempt pins that a _test.go file reaching for the real
-// filesystem and the real clock is left alone, even in a package that is
-// otherwise in scope.
+// TestATestFileIsExempt pins that a _test.go file reaching for the real clock
+// and the real process table is left alone, even in a package that is
+// otherwise in scope. Both shapes are reported in a non-test file of the same
+// package, so the file's scope is what the fixture measures.
 //
 // It pins the boundary of the test-support exemption with it, which is the
 // property that keeps that exemption from swallowing the fleet: tested_test.go
@@ -126,4 +134,42 @@ func TestRegistrationIsWellFormed(t *testing.T) {
 // fixture change, never as drift.
 func TestALocalClockCaptureIsTheDocumentedBoundary(t *testing.T) {
 	analysistest.Run(t, analysistest.TestData(), seams.Analyzer, "localstamp")
+}
+
+// TestAValueHoldMustBeReplaceable pins what makes a function-value reference
+// an exemption at all: the hold has to be one a test can write over. A
+// package-level var, a composite-literal element and an assignment to a field
+// are the three; a local capture, a method value bound to a local, an argument
+// and a return value are not, and each stays reported. An explicit generic
+// instantiation is pinned in both directions with them — `spawn[int](name)` is
+// a CALL and holds nothing, while `var held = spawn[int]` is a hold.
+func TestAValueHoldMustBeReplaceable(t *testing.T) {
+	analysistest.Run(t, analysistest.TestData(), seams.Analyzer, "hold")
+}
+
+// TestADeclaredInterfaceMustBeInjectable pins the same doctrine for the other
+// boundary shape: an interface exempts its implementations only when
+// something can hand one through it. An unexported interface written nowhere
+// else is four lines that acquire the marker and none of the property, so its
+// method stays reported, while the same interface named as the type of a field
+// or a variable is the injected abstraction the standard asks for.
+func TestADeclaredInterfaceMustBeInjectable(t *testing.T) {
+	analysistest.Run(t, analysistest.TestData(), seams.Analyzer, "iface")
+}
+
+// TestTheDocumentedBoundariesHold pins the silences the package comment
+// promises, each beside a reported sibling: the process environment is off the
+// list, a dot-imported call names no package, an adapter for another package's
+// interface is reported like any other method, and a thin public wrapper is
+// reported over a non-clock entry point while the clock's stamp/branch
+// narrowing keeps its wrapper silent.
+func TestTheDocumentedBoundariesHold(t *testing.T) {
+	analysistest.Run(t, analysistest.TestData(), seams.Analyzer, "boundary")
+}
+
+// TestACmdSubstringIsNotACompositionRoot pins the composition-root exemption
+// at its boundary: `cmdutil` contains the letters and carries no `cmd`
+// element, so it stays in scope. A substring match would silence it.
+func TestACmdSubstringIsNotACompositionRoot(t *testing.T) {
+	analysistest.Run(t, analysistest.TestData(), seams.Analyzer, "cmdutil")
 }

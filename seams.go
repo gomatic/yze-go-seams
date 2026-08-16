@@ -1,16 +1,19 @@
 // Package seams provides a go/analysis analyzer enforcing the gomatic
 // dependency-injection standard at authorship: outside a composition root, a
 // package must not call an impure stdlib entry point — the clock, the global
-// random source, the filesystem, the network, a subprocess — directly.
+// random source, the network, a subprocess — directly.
 //
 // The standard's reasoning is testability, not purity: "Dependency injection
 // everywhere. Functions and constructors accept their collaborators
 // (filesystem, clock, readers, writers) as parameters or interfaces. Never
 // reach for a global or a real OS resource where an injected abstraction
-// works. This is what makes 100% coverage reachable." A direct `os.ReadFile`
-// call site has an error branch no test can enter, so the 100%-coverage gate
-// catches it — but only at the end, after the design is written. This rule
-// catches the same defect at the call site.
+// works. This is what makes 100% coverage reachable." A `time.Now()` reading a
+// branch depends on puts that branch out of a test's reach, so the
+// 100%-coverage gate catches it — but only at the end, after the design is
+// written. This rule catches the same defect at the call site.
+//
+// The filesystem is named in the standard's sentence and is deliberately NOT
+// on this rule's list; the boundary below says why.
 //
 // # The conforming forms, all silent by construction
 //
@@ -23,15 +26,27 @@
 //     identifier, not through a package, so it is silent too.
 //   - The same seam written as a closure, because the seam's signature differs
 //     from the stdlib's: `var createTemp = func(dir, pattern string) (tempFile,
-//     error) { return os.CreateTemp(dir, pattern) }`. A function literal in a
-//     package-level var initializer is a seam declaration, not a call site.
+//     error) { return os.CreateTemp(dir, pattern) }`. A function literal that
+//     is the whole initializer of a NAMED package-level var is a seam
+//     declaration, not a call site. A literal bound to nothing (`var _ = func…`)
+//     or buried inside an initializer's expression (`var cached =
+//     sync.OnceValue(func…)`) is not: neither is a var a test can rebind, so
+//     both are walked like any other code.
 //   - The real implementation BEHIND a seam. Every dependency-injected design
 //     bottoms out in one place that touches the world, and that place is
-//     ordinary Go. Two shapes are recognised: a function the package hands
-//     around as a value (`var readDir dirReader = osReadDirNames`), and a
-//     method implementing an interface the package declares (`type Clock
-//     interface{ Now() time.Time }` beside `func (System) Now() time.Time`).
-//     Both mean the seam already exists one level up.
+//     ordinary Go. Two shapes are recognised, and each is recognised only when
+//     the seam it claims is one a test can actually substitute: a function the
+//     package HOLDS as a value — in a package-level var, a composite-literal
+//     field, a field assignment, or an argument at a parameter declared with a
+//     function type (`var readDir dirReader = osReadDirNames`,
+//     `generatedFiles{read: osReadHead}`, `New(git.run, git.exists)`) — and a
+//     method implementing an interface the package declares AND can be injected
+//     through, one that is exported or written as the type of a variable, a
+//     parameter, a result or a field (`type Clock interface{ Now() time.Time }`
+//     beside `func (System) Now() time.Time`). Both mean the seam already
+//     exists one level up. A reference that binds the function nowhere a test
+//     can reach — a local capture, a return, an argument at an `any` parameter
+//     — and an interface nothing holds are not seams and exempt nothing.
 //   - Passing the function itself. `New(os.ReadFile)` is the injection this
 //     rule exists to encourage; only a CALL is reported.
 //
@@ -52,6 +67,15 @@
 //     registration into every binary that transitively imports the package.
 //     The package NAME is deliberately not consulted, because `pgtest` and
 //     `latest` are the same string shape and only one of them is a word.
+//   - The filesystem is not on the list. It was, and it was wrong: it produced
+//     146 of 187 findings across 105 modules with no defect among them, because
+//     the rule's premise — the branches around the call cannot be reached from
+//     a test — is false of it. `t.TempDir` gives a test a real directory and a
+//     bad path reaches the failure branch, so a filesystem call site is already
+//     coverable without a seam. Where a genuinely unreachable branch exists (a
+//     rename failing midway), the package-level function var the standard
+//     sanctions is still available; it is an option, not a shape every call
+//     site owes.
 //   - Only genuinely impure entry points are listed. `time.Since` and duration
 //     arithmetic are pure functions of their arguments; `rand.New(rand.NewPCG(…))`
 //     builds a generator from an explicit, reproducible source. Neither is
@@ -65,10 +89,14 @@
 //     recognised as one. Whether an exported type is someone else's
 //     collaborator cannot be decided from this package's syntax, so such a
 //     method is reported like any other.
-//   - Pushing the impurity to a thin public wrapper — `func Generate(…) { return
-//     generateAt(…, time.Now()) }` over a fully-tested `generateAt` — is the
-//     right design and is still reported, because a one-line wrapper is not
-//     distinguishable from a domain function that reaches for the clock.
+//   - Pushing the impurity to a thin public wrapper — `func Fetch(url string)
+//     (*http.Response, error) { return handle(http.Get(url)) }` over a
+//     fully-tested `handle` — is the right design and is still reported,
+//     because a one-line wrapper is not distinguishable from a domain function
+//     that reaches for the network. The clock is the exception, and it is the
+//     branching narrowing rather than a wrapper rule that makes it one: `func
+//     Generate(seed int) string { return generateAt(seed, time.Now()) }`
+//     consumes the reading as an ARGUMENT, which is a stamp, so it is silent.
 package seams
 
 import (
@@ -86,7 +114,7 @@ const message = "%s is called directly, so the branches around it cannot be reac
 var Analyzer = &analysis.Analyzer{
 	Name: "seams",
 	Doc: "reports a direct call to an impure stdlib entry point (clock, global random source, " +
-		"filesystem, network, subprocess) outside a composition root, where an injected " +
+		"network, subprocess) outside a composition root, where an injected " +
 		"collaborator or a package-level seam variable is required instead",
 	Run: run,
 }
@@ -130,43 +158,65 @@ func checkFile(pass *analysis.Pass, boundary exemptions, file *ast.File) {
 // real implementation behind a seam that already exists.
 //
 // Everything else is walked, with one exception that carries the standard's
-// blessing. A function literal inside a package-level var initializer — `var
-// createTemp = func(dir, pattern string) (tempFile, error) { return
-// os.CreateTemp(dir, pattern) }` — is the seam ITSELF, written as a closure
-// because the seam's signature differs from the stdlib's. It is the same
-// declaration as `var readFile = os.ReadFile` and is silent for the same
-// reason. A direct call in the initializer that is NOT inside a literal is
-// judged like any other call site: `var started = time.Now()` is a stamp and
-// stays silent, while an initializer that BRANCHES on the clock —
-// `var expired = time.Now().After(deadline)` — or reaches any non-clock
-// impure symbol is reported.
+// blessing. A function literal that is the whole initializer of a NAMED
+// package-level var — `var createTemp = func(dir, pattern string) (tempFile,
+// error) { return os.CreateTemp(dir, pattern) }` — is the seam ITSELF, written
+// as a closure because the seam's signature differs from the stdlib's. It is
+// the same declaration as `var readFile = os.ReadFile` and is silent for the
+// same reason.
+//
+// Only that shape. A literal the declaration binds to nothing (`var _ =
+// func…`) and a literal buried inside an initializer's expression (`var cached
+// = sync.OnceValue(func…)`) are neither of them a var a test can rebind, so
+// they are ordinary code and are walked. A direct call in the initializer that
+// is not inside a seam literal is judged like any other call site: `var
+// started = time.Now()` is a stamp and stays silent, while an initializer that
+// BRANCHES on the clock — `var expired = time.Now().After(deadline)` — or
+// reaches any non-clock impure symbol is reported.
 func checkDecl(pass *analysis.Pass, boundary exemptions, decl ast.Decl) {
-	if fn, ok := decl.(*ast.FuncDecl); ok {
-		if !boundary[pass.TypesInfo.ObjectOf(fn.Name)] {
-			inspectCalls(pass, fn, intoLiterals)
+	switch at := decl.(type) {
+	case *ast.FuncDecl:
+		if !boundary[pass.TypesInfo.ObjectOf(at.Name)] {
+			inspectCalls(pass, at, seamDecls{})
 		}
-		return
+	case *ast.GenDecl:
+		inspectCalls(pass, at, seamLiterals(at))
 	}
-	inspectCalls(pass, decl, pastLiterals)
 }
 
-// literalPolicy decides whether a function literal's body is walked.
-type literalPolicy string
+// seamDecls is the set of function literals that ARE seam declarations rather
+// than call sites, and whose bodies are therefore left alone.
+type seamDecls map[*ast.FuncLit]bool
 
-// The two literal policies.
-const (
-	// intoLiterals walks a closure's body, which is ordinary code.
-	intoLiterals literalPolicy = "into"
-	// pastLiterals leaves a closure's body alone, because the closure is a
-	// seam declaration rather than a call site.
-	pastLiterals literalPolicy = "past"
-)
+// seamLiterals is the seam declarations one top-level declaration makes: a
+// function literal standing as the entire initializer of a named var.
+func seamLiterals(gen *ast.GenDecl) seamDecls {
+	declared := seamDecls{}
+	for _, spec := range gen.Specs {
+		at, ok := spec.(*ast.ValueSpec)
+		if ok && len(at.Names) == len(at.Values) {
+			markSeamLiterals(at, declared)
+		}
+	}
+	return declared
+}
 
-// inspectCalls reports each impure call beneath node.
-func inspectCalls(pass *analysis.Pass, node ast.Node, policy literalPolicy) {
+// markSeamLiterals records the literal at each named position of one spec.
+func markSeamLiterals(spec *ast.ValueSpec, declared seamDecls) {
+	for at, name := range spec.Names {
+		lit, ok := spec.Values[at].(*ast.FuncLit)
+		if ok && !isBlank(name) {
+			declared[lit] = true
+		}
+	}
+}
+
+// inspectCalls reports each impure call beneath node, leaving the body of a
+// seam declaration alone.
+func inspectCalls(pass *analysis.Pass, node ast.Node, declared seamDecls) {
 	branching := branchingClocks(node)
 	ast.Inspect(node, func(n ast.Node) bool {
-		if _, ok := n.(*ast.FuncLit); ok && policy == pastLiterals {
+		if lit, ok := n.(*ast.FuncLit); ok && declared[lit] {
 			return false
 		}
 		if call, ok := n.(*ast.CallExpr); ok {

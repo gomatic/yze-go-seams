@@ -6,10 +6,15 @@
 // Its name carries no `test` suffix on purpose. The rule is the import, not the
 // spelling — `internal/testutil` and `tests/harness` are test support without
 // one, and a name-based rule would report them both.
+//
+// The reaches are ones the rule reports in scope — a subprocess spawn and a
+// clock-bound branch — so deleting the exemption changes this fixture's
+// verdict rather than passing vacuously.
 package harness
 
 import (
 	"os"
+	"os/exec"
 	"testing"
 	"time"
 )
@@ -22,12 +27,14 @@ func Fixture(t *testing.T, at string, content []byte) {
 	}
 }
 
-// Stamp reads the real clock, which a test-support package may do freely.
-func Stamp() time.Time {
-	return time.Now()
+// Seed spawns the real git to build a fixture repository.
+func Seed(t *testing.T, at string) {
+	t.Helper()
+	if err := exec.Command("git", "init", at).Run(); err != nil {
+		t.Fatalf("seed repository: %v", err)
+	}
 }
 
-// Read pulls a fixture back off the real filesystem.
-func Read(at string) ([]byte, error) {
-	return os.ReadFile(at)
-}
+// Expired branches on the real clock, which a test-support package may do
+// freely.
+func Expired(deadline time.Time) bool { return time.Now().After(deadline) }

@@ -218,8 +218,13 @@ func TestIsExemptCoversBothWholePackageExemptions(t *testing.T) {
 
 // TestIsCompositionRootMatchesAPathElement pins the exemption's boundary. A
 // main package and anything beneath a `cmd` element are where the real world
-// is wired in; a package merely whose name CONTAINS "cmd" — `internal/command`
-// — is ordinary code and stays in scope.
+// is wired in; a package whose path merely CONTAINS the letters — `cmdutil`,
+// `subcmd/run` — is ordinary code and stays in scope.
+//
+// Each refusal below actually contains the substring, which is the only way
+// the claim can discriminate: an earlier revision asserted "a substring is not
+// an element" of `mod/internal/command`, a path holding no "cmd" at all, so
+// the assertion passed under a substring match too.
 func TestIsCompositionRootMatchesAPathElement(t *testing.T) {
 	t.Parallel()
 	want := assert.New(t)
@@ -227,6 +232,7 @@ func TestIsCompositionRootMatchesAPathElement(t *testing.T) {
 	want.True(isCompositionRoot("anything/at/all", "main"), "a main package is a composition root")
 	want.True(isCompositionRoot("mod/cmd/tool", "tool"), "a package beneath cmd is a composition root")
 	want.True(isCompositionRoot("cmd", "cmd"), "the cmd element may be the whole path")
-	want.False(isCompositionRoot("mod/internal/command", "command"), "a substring is not an element")
+	want.False(isCompositionRoot("mod/cmdutil", "cmdutil"), "an element merely starting with cmd is not it")
+	want.False(isCompositionRoot("mod/subcmd/run", "run"), "nor is one merely ending with it")
 	want.False(isCompositionRoot("mod/store", "store"), "ordinary code is in scope")
 }

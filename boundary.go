@@ -21,205 +21,100 @@ func adapters(pass *analysis.Pass) exemptions {
 	return boundary
 }
 
-// collectValueFuncs marks every package function the package refers to as a
-// VALUE rather than calling — `var readDir dirReader = osReadDirNames`, or
-// `generatedFiles{read: osReadHead}`.
-//
-// A function handed around as a value is an injectable collaborator by
-// construction: something else in the package holds it in a variable or a
-// field that a test can replace. The function is the real implementation
-// behind that seam, and the seam is what the standard asks for.
-//
-// A bare `var _ = fn` is the one value reference that holds nothing: the blank
-// identifier gives a test nothing to replace, so it proves no seam and marks
-// nothing. The TYPED form `var _ Command = ExecCommand` is different in kind —
-// it is the package asserting, checked by the compiler, that the function
-// backs a declared seam type a composition root binds — and it marks.
-func collectValueFuncs(pass *analysis.Pass, boundary exemptions) {
-	for _, file := range pass.Files {
-		if !isTestFile(pass, file) {
-			markValueUses(pass, file, calleeIdents(file), inertIdents(pass, file), boundary)
-		}
-	}
-}
-
-// inertIdents is the set of identifiers referenced only as a hold nothing can
-// replace: the values at BLANK positions of assignments and var declarations,
-// in either spelling — `var _ = fn` and the statement form `_ = fn` alike.
-// The one exception is a declaration whose type annotation denotes a FUNCTION
-// type: `var _ Command = ExecCommand` is the package asserting, checked by the
-// compiler, that the function backs a declared seam shape — while `var _ any =
-// fn` checks nothing, since every value satisfies any, and stays inert.
-func inertIdents(pass *analysis.Pass, file *ast.File) map[*ast.Ident]bool {
-	inert := map[*ast.Ident]bool{}
-	ast.Inspect(file, func(n ast.Node) bool {
-		switch at := n.(type) {
-		case *ast.ValueSpec:
-			if !funcTypeAnnotation(pass, at.Type) {
-				markBlankPositions(identExprs(at.Names), at.Values, inert)
-			}
-		case *ast.AssignStmt:
-			markBlankPositions(at.Lhs, at.Rhs, inert)
-		}
-		return true
-	})
-	return inert
-}
-
-// funcTypeAnnotation reports a type annotation denoting a function type — the
-// compiler-checked seam-shape assertion the exemption honors.
-func funcTypeAnnotation(pass *analysis.Pass, annotation ast.Expr) bool {
-	if annotation == nil {
-		return false
-	}
-	at := pass.TypesInfo.TypeOf(annotation)
-	if at == nil {
-		return false
-	}
-	_, ok := at.Underlying().(*types.Signature)
-	return ok
-}
-
-// identExprs widens declared names to expressions, so declarations and
-// assignments share one blank-position walk.
-func identExprs(names []*ast.Ident) []ast.Expr {
-	exprs := make([]ast.Expr, len(names))
-	for i, name := range names {
-		exprs[i] = name
-	}
-	return exprs
-}
-
-// markBlankPositions marks the value identifiers held only by a blank target.
-// Aligned lists are judged position by position; a multi-value binding from
-// one expression is inert only when EVERY target is blank, since any named
-// sibling holds the whole result.
-func markBlankPositions(targets, values []ast.Expr, inert map[*ast.Ident]bool) {
-	if len(targets) == len(values) {
-		markAlignedBlanks(targets, values, inert)
-		return
-	}
-	if !allBlankExprs(targets) {
-		return
-	}
-	for _, value := range values {
-		markIdentsUnder(value, inert)
-	}
-}
-
-// markAlignedBlanks marks each blank position's value in an aligned binding.
-func markAlignedBlanks(targets, values []ast.Expr, inert map[*ast.Ident]bool) {
-	for i, target := range targets {
-		if isBlank(target) {
-			markIdentsUnder(values[i], inert)
-		}
-	}
-}
-
-// isBlank reports the blank identifier.
-func isBlank(target ast.Expr) bool {
-	ident, ok := target.(*ast.Ident)
-	return ok && ident.Name == "_"
-}
-
-// allBlankExprs reports whether every target is the blank identifier.
-func allBlankExprs(targets []ast.Expr) bool {
-	for _, target := range targets {
-		if !isBlank(target) {
-			return false
-		}
-	}
-	return len(targets) > 0
-}
-
-// markIdentsUnder records every identifier beneath one value expression.
-func markIdentsUnder(value ast.Expr, inert map[*ast.Ident]bool) {
-	ast.Inspect(value, func(n ast.Node) bool {
-		if ident, ok := n.(*ast.Ident); ok {
-			inert[ident] = true
-		}
-		return true
-	})
-}
-
-// calleeIdents is the set of identifiers naming the callee of a call, which
-// are uses in call position rather than references to a function's value.
-func calleeIdents(file *ast.File) map[*ast.Ident]bool {
-	called := map[*ast.Ident]bool{}
-	ast.Inspect(file, func(n ast.Node) bool {
-		if call, ok := n.(*ast.CallExpr); ok {
-			markCallee(called, call.Fun)
-		}
-		return true
-	})
-	return called
-}
-
-// markCallee records the identifier a callee expression names, if it names one.
-func markCallee(called map[*ast.Ident]bool, fun ast.Expr) {
-	switch callee := ast.Unparen(fun).(type) {
-	case *ast.Ident:
-		called[callee] = true
-	case *ast.SelectorExpr:
-		called[callee.Sel] = true
-	}
-}
-
-// markValueUses marks the package functions this file names outside call
-// position, excluding references an untyped blank var makes inertly.
-func markValueUses(
-	pass *analysis.Pass,
-	file *ast.File,
-	called map[*ast.Ident]bool,
-	inert map[*ast.Ident]bool,
-	boundary exemptions,
-) {
-	ast.Inspect(file, func(n ast.Node) bool {
-		if ident, ok := n.(*ast.Ident); ok && !called[ident] && !inert[ident] {
-			markPackageFunc(pass, ident, boundary)
-		}
-		return true
-	})
-}
-
-// markPackageFunc marks ident when it resolves to a function at all. A
-// function from another package lands in the set inertly: the set is consulted
-// for the declarations of this package alone, so a foreign entry sits unread.
-func markPackageFunc(pass *analysis.Pass, ident *ast.Ident, boundary exemptions) {
-	if fn, ok := pass.TypesInfo.Uses[ident].(*types.Func); ok {
-		boundary[fn] = true
-	}
-}
-
 // collectInterfaceMethods marks every method that implements a method of an
-// interface the package itself declares.
+// interface the package itself declares AND can be injected through.
 //
 // That interface IS the injected abstraction the standard asks for, and the
 // method is its real implementation: `type Clock interface { Now() time.Time }`
 // alongside `func (System) Now() time.Time { return time.Now() }` is the
 // pattern, not a defect. Only the methods the interface names are exempt — a
 // second method on the same type, outside the interface, is ordinary code.
+//
+// And only an interface something can be handed through counts. An interface
+// nobody holds gives a test nothing to substitute, so it proves no seam: four
+// unused lines naming a method would otherwise silence any method that
+// happened to match them, which is a marker acquired without the property.
 func collectInterfaceMethods(pass *analysis.Pass, boundary exemptions) {
 	scope := pass.Pkg.Scope()
-	for _, iface := range declaredInterfaces(scope) {
+	for _, iface := range declaredInterfaces(scope, injectableTypes(pass)) {
 		markImplementations(pass.Pkg, scope, iface, boundary)
 	}
 }
 
-// declaredInterfaces is every interface type the package declares.
+// injectableTypes is every type name this package's non-test files annotate
+// something with: a variable, a parameter, a result, or a struct field. A type
+// written in one of those positions is one the package can be handed a
+// different implementation of.
+func injectableTypes(pass *analysis.Pass) map[types.Object]bool {
+	held := map[types.Object]bool{}
+	for _, file := range pass.Files {
+		if !isTestFile(pass, file) {
+			markAnnotations(pass, file, held)
+		}
+	}
+	return held
+}
+
+// markAnnotations records the type names every annotation in one file uses.
+func markAnnotations(pass *analysis.Pass, file *ast.File, held map[types.Object]bool) {
+	ast.Inspect(file, func(n ast.Node) bool {
+		switch at := n.(type) {
+		case *ast.Field:
+			markTypeNames(pass, at.Type, held)
+		case *ast.ValueSpec:
+			markTypeNames(pass, at.Type, held)
+		}
+		return true
+	})
+}
+
+// markTypeNames records every type name one annotation mentions, so a type
+// named inside a composite annotation — `[]doer`, `map[string]doer`,
+// `func(doer)` — counts as held no differently from a bare one.
+func markTypeNames(pass *analysis.Pass, annotation ast.Expr, held map[types.Object]bool) {
+	if annotation == nil {
+		return
+	}
+	ast.Inspect(annotation, func(n ast.Node) bool {
+		if ident, ok := n.(*ast.Ident); ok {
+			markTypeName(pass, ident, held)
+		}
+		return true
+	})
+}
+
+// markTypeName records ident when it resolves to a type name.
+func markTypeName(pass *analysis.Pass, ident *ast.Ident, held map[types.Object]bool) {
+	if name, ok := pass.TypesInfo.Uses[ident].(*types.TypeName); ok {
+		held[name] = true
+	}
+}
+
+// declaredInterfaces is every interface type the package declares that
+// something can be injected through.
 //
 // The empty interface needs no special case. Every type satisfies it, but an
 // exemption is granted per interface METHOD, and an empty interface names
 // none — so it exempts nothing, and excluding it would be a guard with no
 // effect either way.
-func declaredInterfaces(scope *types.Scope) []*types.Interface {
+func declaredInterfaces(scope *types.Scope, held map[types.Object]bool) []*types.Interface {
 	var declared []*types.Interface
 	for _, name := range scope.Names() {
-		if iface, ok := namedInterface(scope.Lookup(name)); ok {
+		at := scope.Lookup(name)
+		if iface, ok := namedInterface(at); ok && injectable(at, held) {
 			declared = append(declared, iface)
 		}
 	}
 	return declared
+}
+
+// injectable reports whether anything can hold the interface. An exported name
+// is part of the package's API, so any importer can hold one and hand back
+// whatever it likes; an unexported name has to be written as the type of a
+// variable, a parameter, a result or a field before anything in the package
+// can be handed through it.
+func injectable(at types.Object, held map[types.Object]bool) bool {
+	return at.Exported() || held[at]
 }
 
 // namedInterface is the interface a type name denotes, if it denotes one.
