@@ -41,41 +41,32 @@ func collectInterfaceMethods(pass *analysis.Pass, boundary exemptions) {
 	}
 }
 
-// injectableTypes is every type name this package's non-test files annotate
-// something with: a variable, a parameter, a result, or a struct field. A type
-// written in one of those positions is one the package can be handed a
-// different implementation of.
+// injectableTypes is every type name this package's non-test files USE — every
+// mention of it anywhere outside its own declaration.
+//
+// Any mention of a type name is a use of it AS a type, and every use of an
+// interface type is a place a value of that type can arrive: a parameter, a
+// field, a result, a variable, a type assertion, a type-switch case, a
+// conversion, a type argument. Enumerating those positions instead was tried
+// and is a treadmill — an enumeration naming four of them missed the type
+// assertion and the type switch, and each miss reports a package that
+// genuinely does inject. The type checker already knows which identifiers name
+// types, so it is asked rather than reimplemented.
 func injectableTypes(pass *analysis.Pass) map[types.Object]bool {
 	held := map[types.Object]bool{}
 	for _, file := range pass.Files {
 		if !isTestFile(pass, file) {
-			markAnnotations(pass, file, held)
+			markUsedTypes(pass, file, held)
 		}
 	}
 	return held
 }
 
-// markAnnotations records the type names every annotation in one file uses.
-func markAnnotations(pass *analysis.Pass, file *ast.File, held map[types.Object]bool) {
+// markUsedTypes records every type name one file uses. A type's own
+// declaration is a definition rather than a use, so an interface nothing
+// mentions again stays absent.
+func markUsedTypes(pass *analysis.Pass, file *ast.File, held map[types.Object]bool) {
 	ast.Inspect(file, func(n ast.Node) bool {
-		switch at := n.(type) {
-		case *ast.Field:
-			markTypeNames(pass, at.Type, held)
-		case *ast.ValueSpec:
-			markTypeNames(pass, at.Type, held)
-		}
-		return true
-	})
-}
-
-// markTypeNames records every type name one annotation mentions, so a type
-// named inside a composite annotation — `[]doer`, `map[string]doer`,
-// `func(doer)` — counts as held no differently from a bare one.
-func markTypeNames(pass *analysis.Pass, annotation ast.Expr, held map[types.Object]bool) {
-	if annotation == nil {
-		return
-	}
-	ast.Inspect(annotation, func(n ast.Node) bool {
 		if ident, ok := n.(*ast.Ident); ok {
 			markTypeName(pass, ident, held)
 		}

@@ -76,12 +76,18 @@
 //     rename failing midway), the package-level function var the standard
 //     sanctions is still available; it is an option, not a shape every call
 //     site owes.
-//   - Only genuinely impure entry points are listed. `time.Since` and duration
-//     arithmetic are pure functions of their arguments; `rand.New(rand.NewPCG(…))`
-//     builds a generator from an explicit, reproducible source. Neither is
-//     reported — only the functions that read a hidden global or the OS.
-//   - A dot-imported package (`. "os"`) makes `ReadFile(path)` indistinguishable
-//     from a local seam at the call site, so it is not reported.
+//   - Only genuinely impure entry points are listed, and the list is narrower
+//     than the packages it draws from. Duration arithmetic over a `time.Time`
+//     the caller supplied — `from.Add(ttl)`, `a.Sub(b)`, `a.Compare(b)` — is a
+//     pure function of its arguments, and `rand.New(rand.NewPCG(…))` builds a
+//     generator from an explicit, reproducible source; neither is reported.
+//     `time.Since` and `time.Until` ARE listed, because each is shorthand for a
+//     `time.Now` the stdlib takes on the caller's behalf — so `time.Since(cut) >
+//     ttl` is the same unreachable branch as `time.Now().Sub(cut) > ttl`, and
+//     draws the same finding. What is never reported is a clock reading nothing
+//     branches on, whichever of the three spells it.
+//   - A dot-imported package (`. "time"`) makes `Now()` indistinguishable from a
+//     local seam at the call site, so it is not reported.
 //   - `os.Getenv` and friends are not listed. Process environment is read once
 //     at the edge often enough that flagging it would report configuration
 //     plumbing far more often than a testability defect.

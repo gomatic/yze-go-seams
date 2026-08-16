@@ -173,3 +173,14 @@ func TestTheDocumentedBoundariesHold(t *testing.T) {
 func TestACmdSubstringIsNotACompositionRoot(t *testing.T) {
 	analysistest.Run(t, analysistest.TestData(), seams.Analyzer, "cmdutil")
 }
+
+// TestTheTestFileMatcherReadsTheWholeName pins isTestFile at every dimension
+// it reads. `httptest.go` ends in the letters without the underscore,
+// `widget_test.golden.go` contains the suffix without ending in it, and
+// `Cased_Test.go` differs from it only by case — all three are ordinary source
+// the build compiles and ships, so all three are judged, while `named_test.go`
+// is not. A corpus that varied none of those could not tell HasSuffix from
+// Contains, and could not tell it from a case-folded match either.
+func TestTheTestFileMatcherReadsTheWholeName(t *testing.T) {
+	analysistest.Run(t, analysistest.TestData(), seams.Analyzer, "named")
+}

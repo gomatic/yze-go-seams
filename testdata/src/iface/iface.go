@@ -36,7 +36,37 @@ func (l Ledger) Back() fielded { return l.back }
 // can be handed through the interface.
 var settling declared
 
-// Client implements all three interfaces' methods.
+// asserted is named only in a TYPE ASSERTION. A caller hands the package
+// anything and the package uses it AS this interface, which is injection in
+// the plainest form there is.
+type asserted interface {
+	Bill(url string) (*http.Response, error)
+}
+
+// Bill routes through whatever it was handed.
+func Bill(at any, url string) (*http.Response, error) {
+	if by, ok := at.(asserted); ok {
+		return by.Bill(url)
+	}
+	return nil, nil
+}
+
+// switched is named only in a TYPE SWITCH case, which is the same evidence
+// spelled the other way.
+type switched interface {
+	Void(url string) (*http.Response, error)
+}
+
+// Void routes through whatever it was handed.
+func Void(at any, url string) (*http.Response, error) {
+	switch by := at.(type) {
+	case switched:
+		return by.Void(url)
+	}
+	return nil, nil
+}
+
+// Client implements every interface's methods.
 type Client struct{}
 
 // Charge is reported: `unheld` names it, and nothing can be handed an unheld.
@@ -50,3 +80,9 @@ func (Client) Refund(url string) (*http.Response, error) { return http.Get(url) 
 
 // Settle is silent for the same reason, through a variable's type.
 func (Client) Settle(url string) (*http.Response, error) { return http.Get(url) }
+
+// Bill is silent: the assertion is where the package is handed one.
+func (Client) Bill(url string) (*http.Response, error) { return http.Get(url) }
+
+// Void is silent for the same reason, through a type-switch case.
+func (Client) Void(url string) (*http.Response, error) { return http.Get(url) }
