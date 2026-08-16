@@ -108,13 +108,16 @@ func injectable(at types.Object, held map[types.Object]bool) bool {
 	return at.Exported() || held[at]
 }
 
-// namedInterface is the interface a type name denotes, if it denotes one.
+// namedInterface is the interface a type name denotes, if it denotes one. An
+// alias needs no unwrapping: (*types.Alias).Underlying already resolves
+// through it, measured rather than assumed, so types.Unalias here would be a
+// call no input could distinguish.
 func namedInterface(obj types.Object) (*types.Interface, bool) {
 	named, ok := obj.(*types.TypeName)
 	if !ok {
 		return nil, false
 	}
-	iface, ok := types.Unalias(named.Type()).Underlying().(*types.Interface)
+	iface, ok := named.Type().Underlying().(*types.Interface)
 	return iface, ok
 }
 

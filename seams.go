@@ -17,16 +17,16 @@
 //
 // # The conforming forms, all silent by construction
 //
-//   - An injected collaborator. `d.readFile(path)`, `fs.Open(name)` — the
-//     qualifier is a value, not an imported package, so nothing is reported.
+//   - An injected collaborator. `d.spawn(name)`, `clock.Now()` — the qualifier
+//     is a value, not an imported package, so nothing is reported.
 //   - A package-level seam variable, which the standard blesses explicitly as
-//     the correct Go answer where a stdlib call has no other seam. `var
-//     readFile = os.ReadFile` is a reference, never a call, so the declaration
-//     is silent; and `readFile(path)` at the use site is a call through an
-//     identifier, not through a package, so it is silent too.
+//     the correct Go answer where a stdlib call has no other seam. `var now =
+//     time.Now` is a reference, never a call, so the declaration is silent;
+//     and `now()` at the use site is a call through an identifier, not through
+//     a package, so it is silent too.
 //   - The same seam written as a closure, because the seam's signature differs
-//     from the stdlib's: `var createTemp = func(dir, pattern string) (tempFile,
-//     error) { return os.CreateTemp(dir, pattern) }`. A function literal that
+//     from the stdlib's: `var runQuiet = func(name string) error { return
+//     exec.Command(name).Run() }`. A function literal that
 //     is the whole initializer of a NAMED package-level var is a seam
 //     declaration, not a call site. A literal bound to nothing (`var _ = func…`)
 //     or buried inside an initializer's expression (`var cached =
@@ -36,18 +36,19 @@
 //     bottoms out in one place that touches the world, and that place is
 //     ordinary Go. Two shapes are recognised, and each is recognised only when
 //     the seam it claims is one a test can actually substitute: a function the
-//     package HOLDS as a value — in a package-level var, a composite-literal
-//     field, a field assignment, or an argument at a parameter declared with a
-//     function type (`var readDir dirReader = osReadDirNames`,
-//     `generatedFiles{read: osReadHead}`, `New(git.run, git.exists)`) — and a
+//     package HOLDS anywhere a test can write over — a package-level var
+//     bound at its declaration or by a later statement, a field, a registry
+//     entry, or an argument at a parameter declared with a function type
+//     (`var spawn commandRunner = execRun`, `client{fetch: httpGet}`,
+//     `New(git.run, git.exists)`) — and a
 //     method implementing an interface the package declares AND can be injected
 //     through, one that is exported or written as the type of a variable, a
 //     parameter, a result or a field (`type Clock interface{ Now() time.Time }`
 //     beside `func (System) Now() time.Time`). Both mean the seam already
 //     exists one level up. A reference that binds the function nowhere a test
-//     can reach — a local capture, a return, an argument at an `any` parameter
-//     — and an interface nothing holds are not seams and exempt nothing.
-//   - Passing the function itself. `New(os.ReadFile)` is the injection this
+//     can reach — a local capture, a blank, an argument at an `any` parameter
+//     — and an interface nothing names are not seams and exempt nothing.
+//   - Passing the function itself. `New(exec.Command)` is the injection this
 //     rule exists to encourage; only a CALL is reported.
 //
 // # Deliberate boundaries

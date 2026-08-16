@@ -14,8 +14,8 @@ import (
 )
 
 // checkedFile type-checks one source string and yields the file with a pass
-// carrying its real type info, so the hold walk is exercised with the
-// checker's own answers rather than hand-built stand-ins.
+// carrying its real type info and package, so the inert walk is exercised with
+// the checker's own answers rather than hand-built stand-ins.
 func checkedFile(t *testing.T, src string) (*analysis.Pass, *ast.File) {
 	t.Helper()
 	fset := token.NewFileSet()
@@ -27,103 +27,101 @@ func checkedFile(t *testing.T, src string) (*analysis.Pass, *ast.File) {
 		Defs:  map[*ast.Ident]types.Object{},
 	}
 	conf := types.Config{Importer: importer.Default()}
-	_, err = conf.Check("p", fset, []*ast.File{file}, info)
+	pkg, err := conf.Check("p", fset, []*ast.File{file}, info)
 	require.NoError(t, err)
-	return &analysis.Pass{TypesInfo: info}, file
+	return &analysis.Pass{TypesInfo: info, Pkg: pkg}, file
 }
 
-// heldNames flattens the held expressions to the identifier spellings they
-// name, with counts, so a claim about WHICH holds were recognised can be made
-// without depending on their order.
-func heldNames(held []ast.Expr) map[string]int {
+// identNames flattens a set of identifiers to spellings with counts, so a
+// claim about WHICH references were judged can be made without depending on
+// their order.
+func identNames(idents map[*ast.Ident]bool) map[string]int {
 	names := map[string]int{}
-	for _, expr := range held {
-		if ident, ok := heldIdent(expr); ok {
-			names[ident.Name]++
-		}
+	for ident := range idents {
+		names[ident.Name]++
 	}
 	return names
 }
 
-// TestHeldExprsWantsAHoldATestCanReplace names the whole content of the
-// value-function exemption: a reference marks only when it binds the function
-// somewhere a test can write over.
+// TestInertIdentsSubtractsWhatATestCannotReplace names the whole content of
+// the value-function exemption, in the direction the exemption is written: a
+// reference is a hold unless it binds the function where a test can reach
+// nothing.
 //
-// The four that qualify are the four a test can substitute — a package-level
-// var, a composite-literal element, an assignment to a field, and an argument
-// at a parameter declared with a FUNCTION type, which is the constructor
-// injection the rule exists to encourage. A local capture, a return value, and
-// an argument at an `any` parameter bind the function nowhere a test can
-// reach, so each stays reported; four lines of one of them would otherwise
-// silence any function in the package.
-func TestHeldExprsWantsAHoldATestCanReplace(t *testing.T) {
+// Three bind nothing — the blank identifier, a local variable, and an argument
+// at a parameter that is not a function type. Everything else is a hold,
+// including the shapes an enumeration of "good" positions kept getting wrong:
+// a package-level var written in an `init`, a registry entry, a field, and an
+// argument at a function-typed parameter.
+func TestInertIdentsSubtractsWhatATestCannotReplace(t *testing.T) {
 	t.Parallel()
 
 	pass, file := checkedFile(t, `package p
 type runner func() error
 type store struct{ run runner }
-func packaged() error { return nil }
-func element() error { return nil }
-func fielded() error { return nil }
-func assigned() error { return nil }
+func blanked() error { return nil }
 func captured() error { return nil }
-func passed() error { return nil }
-func returned() error { return nil }
+func reassigned() error { return nil }
 func loose() error { return nil }
-var seam runner = packaged
-var chain = []runner{element}
-var built = store{run: fielded}
-func Bind(s *store) { s.run = assigned }
+func packaged() error { return nil }
+func inited() error { return nil }
+func registered() error { return nil }
+func fielded() error { return nil }
+func injected() error { return nil }
+var _ = blanked
+var packagedSeam runner = packaged
+var initedSeam runner
+var registry = map[string]runner{}
+func init() { initedSeam = inited; registry["a"] = registered }
 func Capture() error { f := captured; return f() }
-func Pass() error { return apply(passed) }
-func apply(with runner) error { return with() }
+func Reassign() error { var local runner; local = reassigned; return local() }
 func Loose() { record(loose) }
-func record(what any) { _ = what }
-func Return() runner { return returned }
+func record(any) {}
+func Field(s *store) { s.run = fielded }
+func Inject() error { return apply(injected) }
+func apply(with runner) error { return with() }
 `)
 
-	got := heldNames(heldExprs(pass, file))
+	got := identNames(inertIdents(pass, file))
 
 	assert.Equal(
 		t,
-		map[string]int{"packaged": 1, "element": 1, "fielded": 1, "assigned": 1, "passed": 1},
+		map[string]int{"blanked": 1, "captured": 1, "reassigned": 1, "loose": 1},
 		got,
-		"a package-level var, a composite-literal element, a field assignment and a function-typed parameter are holds; a local, an any-parameter and a return are not",
+		"a blank, a local binding and an any-parameter bind nothing a test can reach; a package var, an init assignment, a registry entry, a field and a function-typed parameter are all holds",
 	)
 }
 
-// TestHeldExprsJudgesBlankPositionsNotWholeSpecs pins the per-position rule a
-// mixed binding demands — in `var _, keep = a, b` only the named position
-// holds — and the rule for a binding whose values do not align with its names:
-// a multi-value binding from one expression holds the CALL'S results and names
-// no function, in a declaration and in an assignment alike.
-func TestHeldExprsJudgesBlankPositionsNotWholeSpecs(t *testing.T) {
+// TestInertIdentsJudgesBlankPositionsNotWholeSpecs pins the per-position rule
+// a mixed binding demands — in `var _, keep = a, b` only the blank position's
+// value is inert — and the rule for a binding whose values do not align with
+// its names: it takes several values from ONE expression and names no function
+// at any position, so it marks nothing either way.
+func TestInertIdentsJudgesBlankPositionsNotWholeSpecs(t *testing.T) {
 	t.Parallel()
 
 	pass, file := checkedFile(t, `package p
 type runner func() error
-type store struct{ first, second runner }
 func a() error { return nil }
 func b() error { return nil }
 func pair() (runner, runner) { return a, b }
 var _, keep = a, b
-var one, two = pair()
-func Rebind(s *store) { s.first, s.second = pair() }
+var _, _ = pair()
 `)
 
-	got := heldNames(heldExprs(pass, file))
+	got := identNames(inertIdents(pass, file))
 
-	assert.Zero(t, got["a"], "the blank position holds nothing")
-	assert.Equal(t, 1, got["b"], "the named sibling in the same spec holds")
-	assert.Zero(t, got["pair"], "an unaligned multi-value binding holds the results, not the function that made them")
+	assert.Equal(t, 1, got["a"], "the blank position's value is inert")
+	assert.Zero(t, got["b"], "the named sibling's value holds")
+	assert.Zero(t, got["pair"], "an unaligned binding names no function at any position")
 }
 
-// TestHeldExprsHonoursOnlyACompilerCheckedBlank pins the one blank that is
-// evidence. `var _ = fn` and `var _ any = fn` hold nothing a test could
+// TestInertIdentsHonoursOnlyACompilerCheckedBlank pins the one blank that is
+// evidence. `var _ = fn` and `var _ any = fn` bind nothing a test could
 // replace — every value satisfies any, so the second asserts as little as the
 // first — while `var _ runner = fn` is the package stating, checked by the
 // compiler, that fn backs a declared seam shape.
-func TestHeldExprsHonoursOnlyACompilerCheckedBlank(t *testing.T) {
+func TestInertIdentsHonoursOnlyACompilerCheckedBlank(t *testing.T) {
 	t.Parallel()
 
 	pass, file := checkedFile(t, `package p
@@ -136,42 +134,38 @@ var _ any = loose
 var _ runner = asserted
 `)
 
-	got := heldNames(heldExprs(pass, file))
+	got := identNames(inertIdents(pass, file))
 
-	assert.Equal(t, map[string]int{"asserted": 1}, got,
-		"only the function-typed blank assertion is evidence of a seam")
+	assert.Equal(t, map[string]int{"bare": 1, "loose": 1}, got,
+		"only the function-typed blank assertion escapes the blank rule")
 }
 
-// TestHeldIdentNamesEveryFunctionSpelling pins what a hold can name: a plain
-// function, a method or another package's function through a selector, and an
-// explicit generic instantiation in either spelling — an instantiation is the
-// same function, so holding one is holding it. A call names no function to
-// hold, which is what keeps `var cached = sync.OnceValue(func…)` from marking.
-func TestHeldIdentNamesEveryFunctionSpelling(t *testing.T) {
+// TestCalleeIdentsNamesEveryCallSpelling pins what counts as calling rather
+// than holding: a plain name, a method, a parenthesised callee, and an
+// explicit generic instantiation in either spelling. An instantiation is a
+// CALL to the function it instantiates, so reading the identifier underneath
+// it as a value reference would let one unused type parameter silence a body.
+func TestCalleeIdentsNamesEveryCallSpelling(t *testing.T) {
 	t.Parallel()
-	want := assert.New(t)
 
-	plain, ok := heldIdent(ast.NewIdent("execRun"))
-	want.True(ok)
-	want.Equal("execRun", plain.Name)
+	_, file := checkedFile(t, `package p
+func plain() error { return nil }
+func method() error { return nil }
+func parens() error { return nil }
+func one[T any]() error { return nil }
+func two[T, U any]() error { return nil }
+type holder struct{}
+func (holder) method() error { return nil }
+func Call(h holder) { _ = plain(); _ = h.method(); _ = (parens)(); _ = one[int](); _ = two[int, string]() }
+`)
 
-	through, ok := heldIdent(&ast.SelectorExpr{X: ast.NewIdent("os"), Sel: ast.NewIdent("ReadFile")})
-	want.True(ok)
-	want.Equal("ReadFile", through.Name)
+	got := identNames(calleeIdents(file))
 
-	one, ok := heldIdent(&ast.IndexExpr{X: ast.NewIdent("spawn"), Index: ast.NewIdent("int")})
-	want.True(ok)
-	want.Equal("spawn", one.Name, "an instantiation is the function it instantiates")
-
-	many, ok := heldIdent(&ast.IndexListExpr{
-		X:       ast.NewIdent("spawn"),
-		Indices: []ast.Expr{ast.NewIdent("int"), ast.NewIdent("string")},
-	})
-	want.True(ok)
-	want.Equal("spawn", many.Name, "and so is a two-argument one")
-
-	_, ok = heldIdent(&ast.CallExpr{Fun: ast.NewIdent("OnceValue")})
-	want.False(ok, "a call names its result, not a function anything holds")
+	assert.Equal(t, 1, got["plain"], "a plain callee is a call")
+	assert.Equal(t, 1, got["method"], "so is a method")
+	assert.Equal(t, 1, got["parens"], "parentheses do not make a callee a value")
+	assert.Equal(t, 1, got["one"], "nor does an explicit instantiation")
+	assert.Equal(t, 1, got["two"], "nor a two-argument one")
 }
 
 // TestFuncTypeAnnotationRefusesWhatTheCheckerNeverSaw pins the guard: an
@@ -184,4 +178,15 @@ func TestFuncTypeAnnotationRefusesWhatTheCheckerNeverSaw(t *testing.T) {
 	assert.False(t, funcTypeAnnotation(pass, nil), "no annotation asserts nothing")
 	assert.False(t, funcTypeAnnotation(pass, ast.NewIdent("mystery")),
 		"an unresolved annotation asserts nothing")
+}
+
+// TestIsFuncParamRefusesACallWithNoParameterToBind pins the one call shape
+// that carries an argument and declares no parameter at all: a conversion to a
+// niladic function type, `(func())(fn)`. There is nothing for the argument to
+// bind, so the position is not a function-typed parameter.
+func TestIsFuncParamRefusesACallWithNoParameterToBind(t *testing.T) {
+	t.Parallel()
+
+	niladic := types.NewSignatureType(nil, nil, nil, types.NewTuple(), types.NewTuple(), false)
+	assert.False(t, isFuncParam(niladic, 0), "a call declaring no parameter binds nothing")
 }

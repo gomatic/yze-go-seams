@@ -6,36 +6,40 @@ package seam
 import (
 	"math/rand/v2"
 	"net/http"
-	"os"
 	"os/exec"
 	"time"
 )
 
-// readFile is the seam the standard blesses explicitly — a reference to the
-// stdlib function, never a call, so a test can replace it and reach the error
-// branch behind it.
-var readFile = os.ReadFile
+// spawn is the seam the standard blesses explicitly — a reference to a LISTED
+// stdlib function, never a call, so a test can replace it and reach the branch
+// behind it. It is listed on purpose: a seam over an unlisted surface would be
+// silent whether the seam worked or not.
+var spawn = exec.Command
 
 // now is the clock seam.
 var now = time.Now
 
 // runQuiet is the same seam written as a closure, because the seam's
-// signature is not the stdlib's. A function literal in a package-level var
-// initializer is a seam declaration, exactly like the two above — the
+// signature is not the stdlib's. A function literal in a NAMED package-level
+// var initializer is a seam declaration, exactly like the two above — the
 // subprocess spawn inside it is the seam's own implementation, not a call
 // site that lacks one.
 var runQuiet = func(name string) error {
 	return exec.Command(name).Run()
 }
 
-// openExclusive keeps the original closure-seam shape over the filesystem.
-var openExclusive = func(at string) (*os.File, error) {
-	return os.OpenFile(at, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+// fetchOnce keeps the closure-seam shape over another listed surface, so the
+// two spellings are pinned on more than one entry point.
+var fetchOnce = func(at string) (*http.Response, error) {
+	return http.Get(at)
 }
 
-// ReadConfig reads through the seam, so its qualifier is an identifier rather
+// RunConfig runs through the seam, so its qualifier is an identifier rather
 // than a package.
-func ReadConfig(at string) ([]byte, error) { return readFile(at) }
+func RunConfig(name string) error { return spawn(name).Run() }
+
+// FetchOnce goes through the closure seam.
+func FetchOnce(at string) (*http.Response, error) { return fetchOnce(at) }
 
 // Stamp reads the clock through the seam.
 func Stamp() time.Time { return now() }
@@ -68,20 +72,21 @@ func StampInjected(clock Clock) time.Time { return clock.Now() }
 
 // Store took its collaborators as fields.
 type Store struct {
-	read   func(string) ([]byte, error)
+	run    func(name string, args ...string) *exec.Cmd
 	client *http.Client
 }
 
-// Read reads through the injected function.
-func (s Store) Read(at string) ([]byte, error) { return s.read(at) }
+// Run runs through the injected function.
+func (s Store) Run(name string) error { return s.run(name).Run() }
 
 // Fetch sends through the injected client, one selector deep on a value.
 func (s Store) Fetch(req *http.Request) (*http.Response, error) { return s.client.Do(req) }
 
 // Inject hands the real implementations to the constructor. Passing the
 // function and the client is the injection this rule exists to encourage — a
-// reference, not a call.
-func Inject() Store { return Store{read: os.ReadFile, client: http.DefaultClient} }
+// reference, not a call — and exec.Command is on the list, so the silence is
+// the reference rule's rather than the symbol's.
+func Inject() Store { return Store{run: exec.Command, client: http.DefaultClient} }
 
 // Remaining stamps how long is left, through time.Until: a returned
 // measurement is a stamp, exactly like Elapsed's.
